@@ -156,5 +156,308 @@
 
   load();
 </script>
+
+<!-- ── VOICE / PHOTO RECEIPT WIDGET ───────────────────────────────────────── -->
+<style>
+  /* Floating action button */
+  #receiptFab {
+    position: fixed; bottom: 28px; right: 28px; z-index: 9000;
+    width: 64px; height: 64px; border-radius: 50%;
+    background: #1e2a6e; color: white; border: none;
+    font-size: 26px; cursor: pointer;
+    box-shadow: 0 6px 24px rgba(30,42,110,0.35);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.2s, background 0.2s;
+  }
+  #receiptFab:hover { transform: scale(1.08); background: #162058; }
+
+  /* Modal backdrop */
+  #receiptModal {
+    display: none; position: fixed; inset: 0; z-index: 9100;
+    background: rgba(0,0,0,0.55); align-items: center; justify-content: center;
+  }
+  #receiptModal.open { display: flex; }
+
+  /* Modal card */
+  .rm-card {
+    background: white; border-radius: 22px; padding: 28px 22px 22px;
+    width: 100%; max-width: 400px; margin: 16px;
+    box-shadow: 0 16px 56px rgba(0,0,0,0.22);
+    position: relative;
+  }
+  .rm-close {
+    position: absolute; top: 14px; right: 16px;
+    background: none; border: none; font-size: 22px;
+    color: #9ca3af; cursor: pointer; line-height: 1;
+  }
+  .rm-title { font-size: 18px; font-weight: 800; color: #1e2a6e; margin-bottom: 18px; }
+
+  /* Tabs */
+  .rm-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 18px; }
+  .rm-tab {
+    padding: 12px 8px; border: 2px solid #e5e7eb; border-radius: 12px;
+    background: white; cursor: pointer; text-align: center;
+    font-size: 13px; font-weight: 600; color: #6b7280; transition: all 0.2s;
+  }
+  .rm-tab .ti { font-size: 24px; display: block; margin-bottom: 4px; }
+  .rm-tab.active { border-color: #1e2a6e; background: #eef2ff; color: #1e2a6e; }
+
+  /* Camera */
+  .rm-cam-btn {
+    width: 100%; padding: 13px; background: #1e2a6e; color: white;
+    border: none; border-radius: 12px; font-size: 15px; font-weight: 700;
+    cursor: pointer; margin-bottom: 10px; display: flex;
+    align-items: center; justify-content: center; gap: 8px;
+  }
+  .rm-cam-btn:hover { background: #162058; }
+  .rm-drop {
+    border: 2px dashed #c7d2fe; border-radius: 12px; padding: 22px 16px;
+    text-align: center; cursor: pointer; position: relative;
+    font-size: 13px; color: #9ca3af; margin-bottom: 10px;
+  }
+  .rm-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .rm-preview { display: none; text-align: center; margin-bottom: 10px; position: relative; }
+  .rm-preview img { max-height: 140px; max-width: 100%; border-radius: 10px; border: 2px solid #c7d2fe; }
+  .rm-preview .rm-del {
+    position: absolute; top: -6px; right: -6px; background: #ef4444;
+    color: white; border: none; border-radius: 50%; width: 24px; height: 24px;
+    cursor: pointer; font-size: 15px; line-height: 24px;
+  }
+
+  /* Voice */
+  .rm-voice { text-align: center; }
+  .rm-mic {
+    width: 80px; height: 80px; border-radius: 50%; border: none;
+    background: #1e2a6e; color: white; font-size: 34px; cursor: pointer;
+    margin: 0 auto 12px; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 18px rgba(30,42,110,0.3); transition: all 0.2s;
+  }
+  .rm-mic:hover { transform: scale(1.05); }
+  .rm-mic.listening { background: #dc2626; animation: rmPulse 1.2s infinite; }
+  @keyframes rmPulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(220,38,38,.4); }
+    50%      { box-shadow: 0 0 0 14px rgba(220,38,38,0); }
+  }
+  .rm-hint { color: #6b7280; font-size: 13px; margin-bottom: 10px; min-height: 18px; }
+  .rm-transcript {
+    background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px;
+    padding: 10px 12px; min-height: 56px; font-size: 14px; color: #374151;
+    text-align: left; margin-bottom: 10px; display: none; line-height: 1.5;
+  }
+  .rm-transcript.show { display: block; }
+  .rm-eg {
+    background: #f0fdf4; border-radius: 10px; padding: 10px 12px;
+    font-size: 12px; color: #6b7280; text-align: left; margin-bottom: 10px;
+  }
+  .rm-eg strong { color: #16a34a; display: block; margin-bottom: 4px; font-size: 12px; }
+
+  /* Submit */
+  .rm-submit {
+    width: 100%; padding: 14px; background: #16a34a; color: white;
+    border: none; border-radius: 12px; font-size: 15px; font-weight: 700;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: background 0.2s;
+  }
+  .rm-submit:hover    { background: #15803d; }
+  .rm-submit:disabled { background: #9ca3af; cursor: not-allowed; }
+  .rm-status {
+    display: none; margin-top: 10px; padding: 11px 14px; border-radius: 10px;
+    font-size: 13px; font-weight: 500; text-align: center; line-height: 1.5;
+  }
+  .rm-status.success { background: #dcfce7; color: #16a34a; }
+  .rm-status.error   { background: #fee2e2; color: #dc2626; }
+  .rm-status.loading { background: #eef2ff; color: #1e2a6e; }
+  .rm-spin {
+    display: inline-block; width: 13px; height: 13px;
+    border: 2px solid #1e2a6e; border-top-color: transparent;
+    border-radius: 50%; animation: rmSpin .8s linear infinite; vertical-align: middle;
+  }
+  @keyframes rmSpin { to { transform: rotate(360deg); } }
+</style>
+
+<!-- Floating button -->
+<button id="receiptFab" onclick="document.getElementById('receiptModal').classList.add('open')" title="Submit Receipt (Photo or Voice)">
+  🧾
+</button>
+
+<!-- Modal -->
+<div id="receiptModal" onclick="if(event.target===this)closeReceiptModal()">
+  <div class="rm-card">
+    <button class="rm-close" onclick="closeReceiptModal()">✕</button>
+    <div class="rm-title">Submit Receipt</div>
+
+    <div class="rm-tabs">
+      <button class="rm-tab active" id="rmTabCam" onclick="rmSwitch('camera')">
+        <span class="ti">📷</span>Photo
+      </button>
+      <button class="rm-tab" id="rmTabVoice" onclick="rmSwitch('voice')">
+        <span class="ti">🎙️</span>Voice
+      </button>
+    </div>
+
+    <!-- Camera panel -->
+    <div id="rmPanelCam">
+      <button class="rm-cam-btn" onclick="document.getElementById('rmCamInput').click()">📷 Open Camera</button>
+      <input type="file" id="rmCamInput" accept="image/*" capture="environment" onchange="rmHandleFile(this.files[0])" style="display:none">
+      <div class="rm-drop" id="rmDrop">
+        <input type="file" id="rmFileInput" accept="image/*" onchange="rmHandleFile(this.files[0])">
+        📁 Upload or drag receipt image here
+      </div>
+      <div class="rm-preview" id="rmPreview">
+        <img id="rmPreviewImg" src="" alt="">
+        <button class="rm-del" onclick="rmClearFile()">×</button>
+      </div>
+    </div>
+
+    <!-- Voice panel -->
+    <div id="rmPanelVoice" style="display:none">
+      <div class="rm-voice">
+        <button class="rm-mic" id="rmMic" onclick="rmToggleVoice()">🎙️</button>
+        <p class="rm-hint" id="rmHint">Tap mic and describe the expense</p>
+        <div class="rm-transcript" id="rmTranscript"></div>
+        <div class="rm-eg">
+          <strong>Say something like:</strong>
+          "Spent $89 at Shell gas station today, credit card"<br>
+          "Home Depot $234 for lumber, yesterday"<br>
+          "Lunch at McDonald's $32 today"
+        </div>
+      </div>
+    </div>
+
+    <button class="rm-submit" id="rmSubmit" onclick="rmSubmit()" disabled>Submit to QuickBooks Queue</button>
+    <div class="rm-status" id="rmStatus"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const WEBHOOK = 'REPLACE_WITH_YOUR_N8N_WEBHOOK_URL/receipt-intake';
+  let rmMode = 'camera', rmFile = null, rmVoiceText = '', rmRec = null, rmListening = false;
+
+  window.closeReceiptModal = function() {
+    document.getElementById('receiptModal').classList.remove('open');
+    if (rmListening) rmStopVoice();
+  };
+
+  window.rmSwitch = function(m) {
+    rmMode = m;
+    document.getElementById('rmPanelCam').style.display   = m === 'camera' ? '' : 'none';
+    document.getElementById('rmPanelVoice').style.display = m === 'voice'  ? '' : 'none';
+    document.getElementById('rmTabCam').classList.toggle('active',   m === 'camera');
+    document.getElementById('rmTabVoice').classList.toggle('active', m === 'voice');
+    rmCheckReady();
+  };
+
+  window.rmHandleFile = function(f) {
+    if (!f) return;
+    rmFile = f;
+    const r = new FileReader();
+    r.onload = e => {
+      document.getElementById('rmPreviewImg').src = e.target.result;
+      document.getElementById('rmPreview').style.display = 'block';
+      document.getElementById('rmDrop').style.display    = 'none';
+      rmCheckReady();
+    };
+    r.readAsDataURL(f);
+  };
+
+  window.rmClearFile = function() {
+    rmFile = null;
+    document.getElementById('rmPreview').style.display = 'none';
+    document.getElementById('rmDrop').style.display    = '';
+    rmCheckReady();
+  };
+
+  window.rmToggleVoice = function() { rmListening ? rmStopVoice() : rmStartVoice(); };
+
+  function rmStartVoice() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { rmShowStatus('error','Voice not supported. Try Chrome or Safari.'); return; }
+    rmRec = new SR();
+    rmRec.continuous = true; rmRec.interimResults = true; rmRec.lang = 'en-US';
+    rmRec.onstart = () => {
+      rmListening = true;
+      document.getElementById('rmMic').classList.add('listening');
+      document.getElementById('rmMic').textContent = '⏹';
+      document.getElementById('rmHint').textContent = 'Listening… speak now';
+      document.getElementById('rmTranscript').textContent = '';
+      document.getElementById('rmTranscript').classList.add('show');
+      rmVoiceText = '';
+    };
+    rmRec.onresult = e => {
+      let interim = '', final = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final  += e.results[i][0].transcript;
+        else                       interim += e.results[i][0].transcript;
+      }
+      rmVoiceText = (rmVoiceText + ' ' + final).trim();
+      document.getElementById('rmTranscript').textContent = (rmVoiceText + (interim ? ' ' + interim : '')) || 'Listening…';
+      rmCheckReady();
+    };
+    rmRec.onerror = rmRec.onend = () => rmStopVoice();
+    rmRec.start();
+  }
+
+  function rmStopVoice() {
+    rmListening = false;
+    try { rmRec.stop(); } catch(e) {}
+    document.getElementById('rmMic').classList.remove('listening');
+    document.getElementById('rmMic').textContent = '🎙️';
+    document.getElementById('rmHint').textContent = rmVoiceText ? 'Tap mic to re-record, or submit' : 'Tap mic and describe the expense';
+    rmCheckReady();
+  }
+
+  function rmCheckReady() {
+    const ready = (rmMode === 'camera' && rmFile) || (rmMode === 'voice' && rmVoiceText.trim().length > 3);
+    document.getElementById('rmSubmit').disabled = !ready;
+  }
+
+  window.rmSubmit = async function() {
+    if (rmListening) rmStopVoice();
+    const btn = document.getElementById('rmSubmit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="rm-spin"></span> Processing…';
+    rmShowStatus('loading', 'Claude AI is reading your receipt…');
+    try {
+      let body;
+      if (rmMode === 'camera' && rmFile) {
+        const b64 = await new Promise((res,rej) => {
+          const r = new FileReader();
+          r.onload = e => res(e.target.result); r.onerror = rej;
+          r.readAsDataURL(rmFile);
+        });
+        body = { image_base64: b64.split(',')[1], source: 'camera' };
+      } else {
+        body = { voice_text: rmVoiceText.trim(), source: 'voice' };
+      }
+      const resp = await fetch(WEBHOOK, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      if (!resp.ok) throw new Error('Server error ' + resp.status);
+      rmShowStatus('success', '✅ Done! Receipt added to Google Sheet.\nManager will approve and it posts to QuickBooks automatically.');
+      btn.innerHTML = '✅ Submitted!';
+      setTimeout(() => {
+        rmClearFile(); rmVoiceText = '';
+        document.getElementById('rmTranscript').textContent = '';
+        document.getElementById('rmTranscript').classList.remove('show');
+        document.getElementById('rmHint').textContent = 'Tap mic and describe the expense';
+        document.getElementById('rmStatus').style.display = 'none';
+        btn.innerHTML = 'Submit to QuickBooks Queue';
+        rmCheckReady();
+      }, 4000);
+    } catch(err) {
+      rmShowStatus('error', '❌ ' + err.message);
+      btn.disabled = false;
+      btn.innerHTML = 'Submit to QuickBooks Queue';
+    }
+  };
+
+  function rmShowStatus(type, msg) {
+    const el = document.getElementById('rmStatus');
+    el.className = 'rm-status ' + type;
+    el.style.display = 'block';
+    el.innerHTML = msg.replace(/\n/g,'<br>');
+  }
+})();
+</script>
+<!-- ── END RECEIPT WIDGET ──────────────────────────────────────────────────── -->
 </body>
 </html>
