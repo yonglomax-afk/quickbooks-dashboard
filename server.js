@@ -648,5 +648,103 @@ Rules:
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+//  RECEIPT EMAIL AUTOMATION — Extract + Approve + Post to QuickBooks
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── POST /api/extract-receipt — Claude reads email and extracts receipt data
+app.post('/api/extract-receipt', requireApiKey, async (req, res) => {
+  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+  if (!CLAUDE_KEY) return res.status(500).json({ error: 'CLAUDE_API_KEY not set' });
+
+  const { email_body, email_subject, email_from } = req.body;
+  if (!email_body) return res.status(400).json({ error: 'email_body required' });
+
+  const prompt = `You are a receipt extraction specialist. Analyze this email and determine if it is a business expense receipt or purchase confirmation.
+
+Email From: ${(email_from || '').substring(0, 200)}
+Email Subject: ${(email_subject || '').substring(0, 200)}
+Email Body: ${(email_body || '').substring(0, 3000)}
+
+If this is a receipt, invoice, or order confirmation for a business purchase — extract the data.
+If it is NOT a receipt (newsletter, personal email, marketing, social notification) — set is_receipt to false.
+
+Respond with ONLY a valid JSON object, no explanation:
+{
+  "is_receipt": true or false,
+  "vendor": "company or store name, or null",
+  "amount": total amount as a number, or null,
+  "date": "YYYY-MM-DD format, or null",
+  "description": "brief description of what was purchased, or null",
+  "items": ["item1", "item2"] or []
+}`;
+
+  try {
+    const resp = await axios.post('https://api.anthropic.com/v1/messages',
+      { model: 'claude-haiku-4-5-20251001', max_tokens: 400, messages: [{ role: 'user', content: prompt }] },
+      { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
+    );
+    const text = resp.data.content[0]?.text || '{}';
+    const match = text.match(/\{[\s\S]*\}/);
+    const receipt = match ? JSON.parse(match[0]) : { is_receipt: false };
+    res.json({ success: true, receipt });
+  } catch (e) {
+    console.error('Extract receipt error:', e.response?.data || e.message);
+    res.status(500).json({ success: false, error: e.message, receipt: { is_receipt: false } });
+  }
+});
+
+// ── POST /api/approve-expense — Jennifer reviews receipt and decides category + QB account
+app.post('/api/approve-expense', requireApiKey, async (req, res) => {
+  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+  if (!CLAUDE_KEY) return res.status(500).json({ error: 'CLAUDE_API_KEY not set' });
+
+  const { vendor, amount, date, description, items = [] } = req.body;
+
+  const prompt = `You are Jennifer, an AI Office Manager. Review this business expense receipt and categorize it for QuickBooks.
+
+Vendor: ${vendor || 'Unknown'}
+Amount: $${amount || 0}
+Date: ${date || 'Unknown'}
+Description: ${description || 'No description'}
+Items purchased: ${items.length > 0 ? items.join(', ') : 'Not listed'}
+
+Choose the best category from this list: Materials, Supplies, Food, Travel, Utilities, Office, Equipment, Software, Other
+
+QuickBooks account for each category:
+- Materials → "Cost of Goods Sold"
+- Supplies → "Office Expenses"
+- Food → "Meals and Entertainment"
+- Travel → "Travel"
+- Utilities → "Utilities"
+- Office → "Office Expenses"
+- Equipment → "Equipment Rental"
+- Software → "Office Expenses"
+- Other → "Other Business Expenses"
+
+Respond with ONLY a valid JSON object:
+{
+  "approved": true,
+  "category": "chosen category",
+  "account": "QuickBooks account name",
+  "confidence": number 0-100,
+  "notes": "one sentence explanation"
+}`;
+
+  try {
+    const resp = await axios.post('https://api.anthropic.com/v1/messages',
+      { model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{ role: 'user', content: prompt }] },
+      { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
+    );
+    const text = resp.data.content[0]?.text || '{}';
+    const match = text.match(/\{[\s\S]*\}/);
+    const decision = match ? JSON.parse(match[0]) : { approved: false, category: 'Other', confidence: 0, notes: 'Could not parse response' };
+    res.json({ ...decision, vendor, amount, date, description });
+  } catch (e) {
+    console.error('Approve expense error:', e.response?.data || e.message);
+    res.status(500).json({ approved: false, error: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`✅ QuickBooks Dashboard running on port ${PORT}`));
