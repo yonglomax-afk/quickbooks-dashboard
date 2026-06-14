@@ -17,6 +17,9 @@ let companyId = '';
 // ── Home: serve dashboard
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'dashboard.html')));
 
+// ── Manufacturing dashboard
+app.get('/manufacturing', (req, res) => res.sendFile(path.join(__dirname, 'manufacturing-dashboard.html')));
+
 // ── Step 1: Start OAuth login
 app.get('/login', (req, res) => {
   const url = `https://appcenter.intuit.com/connect/oauth2?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(SCOPES)}&state=secureState`;
