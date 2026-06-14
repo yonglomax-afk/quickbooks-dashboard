@@ -87,5 +87,86 @@ app.get('/api/profitloss', async (req, res) => {
   } catch(e) { res.json({}); }
 });
 
+// ── API key guard for write endpoints (set N8N_API_KEY in Railway env vars)
+function requireApiKey(req, res, next) {
+  const expected = process.env.N8N_API_KEY;
+  if (!expected || req.headers['x-api-key'] !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+// QuickBooks category → account name mapping
+const CATEGORY_ACCOUNTS = {
+  Materials:  'Cost of Goods Sold',
+  Supplies:   'Office Expenses',
+  Food:       'Meals and Entertainment',
+  Travel:     'Travel',
+  Utilities:  'Utilities',
+  Office:     'Office Expenses',
+  Equipment:  'Equipment Rental',
+  Other:      'Other Business Expenses'
+};
+
+// ── POST /api/expense — Create expense in QuickBooks (called by n8n batch workflow)
+app.post('/api/expense', requireApiKey, async (req, res) => {
+  if (!tokens.access_token) return res.status(401).json({ error: 'Not connected to QuickBooks. Visit the dashboard and click Connect.' });
+  const { vendor, date, amount, category, memo } = req.body;
+  const accountName = CATEGORY_ACCOUNTS[category] || 'Other Business Expenses';
+  const body = {
+    PaymentType: 'Cash',
+    AccountRef: { name: 'Checking' },
+    TxnDate: date,
+    Line: [{
+      Amount: parseFloat(amount) || 0,
+      DetailType: 'AccountBasedExpenseLineDetail',
+      Description: memo || `${category || 'Expense'}: ${vendor || ''}`,
+      AccountBasedExpenseLineDetail: {
+        AccountRef: { name: accountName },
+        BillableStatus: 'NotBillable'
+      }
+    }]
+  };
+  if (vendor) body.EntityRef = { name: vendor, type: 'Vendor' };
+  try {
+    const { data } = await axios.post(
+      `${SANDBOX_BASE}/${companyId}/purchase?minorversion=65`,
+      body,
+      { headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: 'application/json', 'Content-Type': 'application/json' } }
+    );
+    res.json({ success: true, purchase_id: data.Purchase?.Id, doc_number: data.Purchase?.DocNumber });
+  } catch (e) {
+    const msg = e.response?.data?.Fault?.Error?.[0]?.Message || e.message;
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// ── POST /api/payment — Record payment against invoice in QuickBooks
+app.post('/api/payment', requireApiKey, async (req, res) => {
+  if (!tokens.access_token) return res.status(401).json({ error: 'Not connected to QuickBooks. Visit the dashboard and click Connect.' });
+  const { invoice_number, amount, date, payment_method } = req.body;
+  try {
+    const invoiceData = await qbGet('/query?query=' + encodeURIComponent(`SELECT * FROM Invoice WHERE DocNumber = '${invoice_number}'`));
+    const invoice = invoiceData.QueryResponse?.Invoice?.[0];
+    if (!invoice) return res.status(404).json({ success: false, error: `Invoice #${invoice_number} not found` });
+    const body = {
+      TxnDate: date,
+      TotalAmt: parseFloat(amount) || 0,
+      CustomerRef: { value: invoice.CustomerRef.value },
+      Line: [{ Amount: parseFloat(amount) || 0, LinkedTxn: [{ TxnId: invoice.Id, TxnType: 'Invoice' }] }]
+    };
+    if (payment_method) body.PaymentMethodRef = { name: payment_method };
+    const { data } = await axios.post(
+      `${SANDBOX_BASE}/${companyId}/payment?minorversion=65`,
+      body,
+      { headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: 'application/json', 'Content-Type': 'application/json' } }
+    );
+    res.json({ success: true, payment_id: data.Payment?.Id });
+  } catch (e) {
+    const msg = e.response?.data?.Fault?.Error?.[0]?.Message || e.message;
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`✅ QuickBooks Dashboard running on port ${PORT}`));
