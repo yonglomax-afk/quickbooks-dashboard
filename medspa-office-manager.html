@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glow Med Spa — AI Office Manager</title>
+  <style>
+    :root {
+      --rose: #c9748c;
+      --rose-light: #f9e4ec;
+      --rose-dark: #9a3a56;
+      --gold: #d4a96a;
+      --bg: #1a0f14;
+      --surface: #261520;
+      --surface2: #321a25;
+      --border: #4a2535;
+      --text: #f5e6ec;
+      --text-muted: #9a7080;
+      --green: #27ae60;
+      --yellow: #f1c40f;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+
+    /* Header */
+    header {
+      background: linear-gradient(135deg, #9a3a56, #c9748c 60%, #d4a96a);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 20px rgba(154,58,86,0.4);
+      flex-shrink: 0;
+    }
+    .hd-left { display:flex; align-items:center; gap:14px; }
+    .avatar {
+      width:46px; height:46px; border-radius:50%;
+      background:rgba(255,255,255,0.2); backdrop-filter:blur(10px);
+      display:flex; align-items:center; justify-content:center; font-size:22px;
+      border:2px solid rgba(255,255,255,0.4);
+    }
+    .hd-title { font-size:18px; font-weight:700; color:white; }
+    .hd-sub { font-size:12px; color:rgba(255,255,255,0.7); margin-top:1px; }
+    .hd-right { display:flex; gap:10px; align-items:center; }
+    .hd-btn {
+      padding:8px 16px; border-radius:25px; font-size:13px; font-weight:600;
+      cursor:pointer; border:none; text-decoration:none; transition:all 0.2s;
+    }
+    .btn-glass { background:rgba(255,255,255,0.18); color:white; border:1px solid rgba(255,255,255,0.35); }
+    .btn-glass:hover { background:rgba(255,255,255,0.28); }
+    .btn-white { background:white; color:var(--rose-dark); }
+    .btn-white:hover { background:#f9e4ec; }
+
+    /* Agent pills */
+    .agent-bar {
+      background: var(--surface);
+      padding: 10px 20px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .agent-label { font-size:11px; color:var(--text-muted); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
+    .pill {
+      display:inline-flex; align-items:center; gap:6px; padding:5px 12px;
+      border-radius:20px; font-size:12px; font-weight:600;
+      background:var(--surface2); color:var(--text-muted); border:1px solid var(--border);
+      transition:all 0.3s;
+    }
+    .pill.active {
+      background:linear-gradient(135deg,var(--rose-dark),var(--rose));
+      color:white; border-color:var(--rose);
+      animation:pill-pulse 1.5s infinite;
+    }
+    .pill-dot { width:7px; height:7px; border-radius:50%; background:currentColor; opacity:0.6; }
+    .pill.active .pill-dot { opacity:1; animation:dot-blink 0.8s infinite; }
+    @keyframes pill-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(201,116,140,0.4)} 50%{box-shadow:0 0 0 6px rgba(201,116,140,0)} }
+    @keyframes dot-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* Chat area */
+    #chat-area {
+      flex:1; overflow-y:auto; padding:24px 20px; display:flex; flex-direction:column; gap:18px;
+      scrollbar-width:thin; scrollbar-color:var(--border) transparent;
+    }
+    #chat-area::-webkit-scrollbar { width:5px; }
+    #chat-area::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+    /* Welcome */
+    .welcome {
+      text-align:center; padding:30px 20px; max-width:600px; margin:0 auto;
+    }
+    .welcome h2 { font-size:22px; font-weight:700; color:var(--rose); margin-bottom:8px; }
+    .welcome p { font-size:14px; color:var(--text-muted); line-height:1.6; margin-bottom:24px; }
+    .examples { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+    .ex-card {
+      background:var(--surface); border:1px solid var(--border); border-radius:12px;
+      padding:12px 14px; font-size:13px; cursor:pointer; text-align:left;
+      transition:all 0.2s; color:var(--text);
+    }
+    .ex-card:hover { border-color:var(--rose); background:var(--surface2); transform:translateY(-1px); }
+    .ex-icon { font-size:18px; margin-bottom:6px; }
+
+    /* Messages */
+    .msg { display:flex; gap:12px; max-width:820px; }
+    .msg.user { flex-direction:row-reverse; align-self:flex-end; }
+    .msg-avatar {
+      width:36px; height:36px; border-radius:50%; flex-shrink:0;
+      display:flex; align-items:center; justify-content:center; font-size:16px;
+    }
+    .msg.user .msg-avatar { background:linear-gradient(135deg,var(--rose-dark),var(--rose)); }
+    .msg.assistant .msg-avatar { background:var(--surface2); border:1px solid var(--border); }
+    .bubble {
+      padding:13px 16px; border-radius:16px; font-size:14px; line-height:1.65;
+      max-width:calc(100% - 50px);
+    }
+    .msg.user .bubble { background:linear-gradient(135deg,var(--rose-dark),var(--rose)); color:white; border-radius:16px 4px 16px 16px; }
+    .msg.assistant .bubble { background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px 16px 16px 16px; }
+    .bubble-footer { display:flex; gap:8px; margin-top:8px; align-items:center; }
+    .read-btn {
+      background:none; border:1px solid var(--border); color:var(--text-muted);
+      font-size:11px; padding:3px 10px; border-radius:20px; cursor:pointer;
+      transition:all 0.2s;
+    }
+    .read-btn:hover { border-color:var(--rose); color:var(--rose); }
+    .agent-used { font-size:11px; color:var(--rose); opacity:0.8; }
+
+    /* Typing indicator */
+    .typing { display:flex; gap:12px; align-items:center; }
+    .typing .msg-avatar { width:36px; height:36px; border-radius:50%; background:var(--surface2); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:16px; }
+    .dots { display:flex; gap:5px; padding:14px 18px; background:var(--surface2); border:1px solid var(--border); border-radius:4px 16px 16px 16px; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--rose); animation:bounce 1.2s infinite; }
+    .dot:nth-child(2) { animation-delay:0.2s; }
+    .dot:nth-child(3) { animation-delay:0.4s; }
+    @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-10px)} }
+
+    /* Input bar */
+    .input-bar {
+      background:var(--surface); border-top:1px solid var(--border);
+      padding:14px 20px; display:flex; gap:12px; align-items:flex-end; flex-shrink:0;
+    }
+    #msg-input {
+      flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text);
+      border-radius:14px; padding:12px 16px; font-size:14px; resize:none; height:48px;
+      max-height:160px; outline:none; font-family:inherit; line-height:1.5;
+      transition:border-color 0.2s;
+    }
+    #msg-input:focus { border-color:var(--rose); }
+    #msg-input::placeholder { color:var(--text-muted); }
+    .ic-btn {
+      width:48px; height:48px; border-radius:14px; border:none; cursor:pointer;
+      display:flex; align-items:center; justify-content:center; font-size:20px;
+      transition:all 0.2s; flex-shrink:0;
+    }
+    #voice-btn { background:var(--surface2); color:var(--text-muted); border:1px solid var(--border); }
+    #voice-btn.listening { background:linear-gradient(135deg,#c0392b,#e74c3c); color:white; border-color:transparent; animation:pill-pulse 1.2s infinite; }
+    #send-btn { background:linear-gradient(135deg,var(--rose-dark),var(--rose)); color:white; }
+    #send-btn:hover { opacity:0.9; transform:scale(1.05); }
+
+    /* Voice tooltip */
+    #voice-tip { display:none; position:absolute; bottom:80px; left:50%; transform:translateX(-50%); background:var(--surface2); border:1px solid var(--rose); color:var(--rose); padding:6px 14px; border-radius:20px; font-size:13px; font-weight:600; white-space:nowrap; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="hd-left">
+    <div class="avatar">🌸</div>
+    <div>
+      <div class="hd-title">Glow Med Spa — AI Office Manager</div>
+      <div class="hd-sub">Voice · Chat · Always On</div>
+    </div>
+  </div>
+  <div class="hd-right">
+    <a href="/medspa" class="hd-btn btn-glass">← Dashboard</a>
+    <a href="/" class="hd-btn btn-white">Main Menu</a>
+  </div>
+</header>
+
+<!-- Sub-agent pills -->
+<div class="agent-bar">
+  <span class="agent-label">Sub-Agents:</span>
+  <div class="pill" id="pill-apt"><div class="pill-dot"></div>📅 Appointment</div>
+  <div class="pill" id="pill-cli"><div class="pill-dot"></div>👥 Client</div>
+  <div class="pill" id="pill-rev"><div class="pill-dot"></div>💰 Revenue</div>
+  <div class="pill" id="pill-inv"><div class="pill-dot"></div>📦 Inventory</div>
+</div>
+
+<!-- Chat -->
+<div id="chat-area">
+  <div class="welcome" id="welcome">
+    <div style="font-size:52px;margin-bottom:12px">🌸</div>
+    <h2>Good morning! I'm your AI Office Manager</h2>
+    <p>I can answer any question about appointments, clients, revenue, and inventory — by voice or text, instantly.</p>
+    <div class="examples">
+      <div class="ex-card" onclick="askQuestion(this.querySelector('.ex-q').textContent)">
+        <div class="ex-icon">📅</div>
+        <div style="font-weight:600;margin-bottom:4px">Today's Schedule</div>
+        <div class="ex-q" style="color:var(--text-muted)">How many appointments do we have today?</div>
+      </div>
+      <div class="ex-card" onclick="askQuestion(this.querySelector('.ex-q').textContent)">
+        <div class="ex-icon">💰</div>
+        <div style="font-weight:600;margin-bottom:4px">Revenue Check</div>
+        <div class="ex-q" style="color:var(--text-muted)">How much revenue did we make this month?</div>
+      </div>
+      <div class="ex-card" onclick="askQuestion(this.querySelector('.ex-q').textContent)">
+        <div class="ex-icon">👥</div>
+        <div style="font-weight:600;margin-bottom:4px">Top Clients</div>
+        <div class="ex-q" style="color:var(--text-muted)">Who are our top 5 clients by spending?</div>
+      </div>
+      <div class="ex-card" onclick="askQuestion(this.querySelector('.ex-q').textContent)">
+        <div class="ex-icon">📦</div>
+        <div style="font-weight:600;margin-bottom:4px">Inventory Alert</div>
+        <div class="ex-q" style="color:var(--text-muted)">What products are running low?</div>
+      </div>
+      <div class="ex-card" onclick="askQuestion(this.querySelector('.ex-q').textContent)">
+        <div class="ex-icon">💉</div>
+        <div style="font-weight:600;margin-bottom:4px">Best Treatment</div>
+        <div class="ex-q" style="color:var(--text-muted)">Which treatment makes us the most money?</div>
+      </div>
+      <div class="ex-card" onclick="askQuestion(this.querySelector('.ex-q').textContent)">
+        <div class="ex-icon">📞</div>
+        <div style="font-weight:600;margin-bottom:4px">Client Follow-up</div>
+        <div class="ex-q" style="color:var(--text-muted)">Which clients haven't visited in 3 months?</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Voice tip -->
+<div id="voice-tip">🔴 Listening... speak now</div>
+
+<!-- Input bar -->
+<div class="input-bar" style="position:relative">
+  <textarea id="msg-input" placeholder="Ask anything about your spa... (or press 🎙️ to speak)" rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+  <button id="voice-btn" class="ic-btn" onclick="toggleVoice()" title="Voice input">🎙️</button>
+  <button id="send-btn" class="ic-btn" onclick="sendMessage()" title="Send">➤</button>
+</div>
+
+<script>
+  const chatArea = document.getElementById('chat-area');
+  const input    = document.getElementById('msg-input');
+  let history = [];
+  let isListening = false;
+  let recognition = null;
+
+  const AGENT_PILLS = {
+    appointment_agent: 'pill-apt',
+    client_agent:      'pill-cli',
+    revenue_agent:     'pill-rev',
+    inventory_agent:   'pill-inv'
+  };
+
+  function autoResize(el) {
+    el.style.height = '48px';
+    el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  }
+
+  function askQuestion(q) {
+    input.value = q;
+    sendMessage();
+  }
+
+  function addMsg(role, content, agents=[]) {
+    const el = document.createElement('div');
+    el.className = 'msg ' + role;
+    const avatarIcon = role === 'user' ? '👤' : '🌸';
+    const agentBadge = agents.length ? `<span class="agent-used">via ${agents.map(a=>a.replace('_agent','').replace('_',' ')).join(', ')}</span>` : '';
+    el.innerHTML = `
+      <div class="msg-avatar">${avatarIcon}</div>
+      <div>
+        <div class="bubble">${content.replace(/\n/g,'<br>')}</div>
+        ${role==='assistant' ? `<div class="bubble-footer">${agentBadge}<button class="read-btn" onclick="speak('${content.replace(/'/g,"\\'").replace(/\n/g,' ')}')">🔊 Read aloud</button></div>` : ''}
+      </div>
+    `;
+    chatArea.appendChild(el);
+    el.scrollIntoView({ behavior:'smooth', block:'end' });
+    return el;
+  }
+
+  function showTyping() {
+    const el = document.createElement('div');
+    el.className = 'typing'; el.id = 'typing';
+    el.innerHTML = `<div class="msg-avatar">🌸</div><div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
+    chatArea.appendChild(el);
+    el.scrollIntoView({ behavior:'smooth', block:'end' });
+  }
+
+  function hideTyping() { document.getElementById('typing')?.remove(); }
+
+  function setAgents(agents) {
+    Object.values(AGENT_PILLS).forEach(id => document.getElementById(id).classList.remove('active'));
+    agents.forEach(a => { const id = AGENT_PILLS[a]; if(id) document.getElementById(id).classList.add('active'); });
+    setTimeout(()=> Object.values(AGENT_PILLS).forEach(id => document.getElementById(id).classList.remove('active')), 3000);
+  }
+
+  async function sendMessage() {
+    const msg = input.value.trim(); if (!msg) return;
+    document.getElementById('welcome')?.remove();
+    input.value = ''; input.style.height = '48px';
+    addMsg('user', msg);
+    history.push({ role:'user', content:msg });
+    showTyping();
+
+    try {
+      const res = await fetch('/api/medspa-chat', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ message:msg, history:history.slice(-8) })
+      });
+      const data = await res.json();
+      hideTyping();
+      const answer = data.answer || 'I had trouble getting that.';
+      addMsg('assistant', answer, data.agents||[]);
+      history.push({ role:'assistant', content:answer });
+      if(data.agents?.length) setAgents(data.agents);
+      speak(answer);
+    } catch(e) {
+      hideTyping();
+      addMsg('assistant', 'Connection error. Please check the server is running.');
+    }
+  }
+
+  function speak(text) {
+    const clean = text.replace(/<[^>]*>/g,'').replace(/\*\*/g,'').substring(0,500);
+    const u = new SpeechSynthesisUtterance(clean);
+    u.rate=0.95; u.pitch=1.05;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+
+  function toggleVoice() {
+    if (isListening) { recognition?.stop(); return; }
+    const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
+    if (!SR) { alert('Voice input not supported. Please use Chrome or Safari.'); return; }
+    recognition = new SR();
+    recognition.continuous = false;
+    recognition.lang = 'en-US';
+    recognition.onstart = ()=> {
+      isListening = true;
+      document.getElementById('voice-btn').classList.add('listening');
+      document.getElementById('voice-btn').textContent = '⏹';
+      document.getElementById('voice-tip').style.display = 'block';
+    };
+    recognition.onresult = e=> {
+      const txt = Array.from(e.results).map(r=>r[0].transcript).join(' ');
+      input.value = txt;
+      autoResize(input);
+    };
+    recognition.onend = ()=> {
+      isListening = false;
+      document.getElementById('voice-btn').classList.remove('listening');
+      document.getElementById('voice-btn').textContent = '🎙️';
+      document.getElementById('voice-tip').style.display = 'none';
+      if (input.value.trim()) sendMessage();
+    };
+    recognition.onerror = ()=> {
+      isListening = false;
+      document.getElementById('voice-btn').classList.remove('listening');
+      document.getElementById('voice-btn').textContent = '🎙️';
+      document.getElementById('voice-tip').style.display = 'none';
+    };
+    recognition.start();
+  }
+</script>
+</body>
+</html>

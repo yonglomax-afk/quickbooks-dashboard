@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glow Med Spa — AI Dashboard</title>
+  <style>
+    :root {
+      --rose: #c9748c;
+      --rose-light: #f9e4ec;
+      --rose-dark: #9a3a56;
+      --gold: #d4a96a;
+      --text: #2d1f2f;
+      --text-muted: #7a6880;
+      --bg: #fdf8fa;
+      --card: #ffffff;
+      --border: #f0dde6;
+      --green: #27ae60;
+      --yellow: #f39c12;
+      --red: #e74c3c;
+      --blue: #3498db;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); }
+
+    header {
+      background: linear-gradient(135deg, #9a3a56 0%, #c9748c 55%, #d4a96a 100%);
+      color: white;
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 20px rgba(154,58,86,0.3);
+    }
+    .logo { font-size:24px; font-weight:700; letter-spacing:-0.5px; }
+    .logo span { opacity:0.75; font-weight:300; }
+    .logo-sub { font-size:11px; opacity:0.65; margin-top:2px; }
+    .header-btns { display:flex; gap:10px; }
+    .hbtn {
+      padding:9px 18px; border-radius:25px; font-size:13px; font-weight:600;
+      cursor:pointer; border:none; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s;
+    }
+    .hbtn-ai { background:rgba(255,255,255,0.18); color:white; border:1px solid rgba(255,255,255,0.35); }
+    .hbtn-ai:hover { background:rgba(255,255,255,0.28); }
+    .hbtn-white { background:white; color:var(--rose-dark); }
+    .hbtn-white:hover { background:#f9e4ec; }
+
+    main { max-width:1400px; margin:0 auto; padding:26px 22px; }
+
+    /* AI Banner */
+    .ai-banner {
+      background: linear-gradient(135deg, #9a3a56, #c9748c 60%, #d4a96a);
+      border-radius:16px; padding:20px 26px; color:white;
+      display:flex; align-items:center; justify-content:space-between;
+      margin-bottom:24px; box-shadow:0 6px 24px rgba(154,58,86,0.25);
+    }
+    .ai-banner h3 { font-size:18px; font-weight:700; }
+    .ai-banner p { font-size:13px; opacity:0.85; margin-top:4px; max-width:540px; }
+    .ai-banner a {
+      background:white; color:var(--rose-dark); padding:10px 22px;
+      border-radius:25px; font-weight:700; font-size:14px; text-decoration:none; white-space:nowrap;
+    }
+    .ai-banner a:hover { opacity:0.9; }
+
+    /* KPI Grid */
+    .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:16px; margin-bottom:24px; }
+    .kpi-card {
+      background:var(--card); border-radius:16px; padding:22px;
+      border:1px solid var(--border); box-shadow:0 2px 12px rgba(0,0,0,0.04); position:relative; overflow:hidden;
+    }
+    .kpi-card::before {
+      content:''; position:absolute; top:0; left:0; right:0; height:4px;
+      background:linear-gradient(90deg, var(--rose-dark), var(--gold));
+    }
+    .kpi-icon { font-size:26px; margin-bottom:10px; }
+    .kpi-val { font-size:30px; font-weight:700; line-height:1; }
+    .kpi-val.red { color:var(--red); }
+    .kpi-label { font-size:12px; color:var(--text-muted); margin-top:4px; }
+    .kpi-delta { font-size:12px; margin-top:8px; font-weight:600; }
+    .up { color:var(--green); } .warn { color:var(--yellow); } .dn { color:var(--red); }
+
+    /* Two-col */
+    .two-col { display:grid; grid-template-columns:1.6fr 1fr; gap:20px; margin-bottom:22px; }
+    @media(max-width:880px){ .two-col{ grid-template-columns:1fr; } }
+
+    /* Card */
+    .card { background:var(--card); border-radius:16px; border:1px solid var(--border); box-shadow:0 2px 12px rgba(0,0,0,0.04); overflow:hidden; }
+    .card-hd { padding:14px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+    .card-hd h3 { font-size:14px; font-weight:700; }
+    .card-body { padding:20px; }
+
+    /* Appointment table */
+    table.sched { width:100%; border-collapse:collapse; }
+    table.sched th {
+      text-align:left; font-size:10px; font-weight:700; text-transform:uppercase;
+      letter-spacing:0.5px; color:var(--text-muted); padding:8px 12px; background:var(--rose-light);
+    }
+    table.sched td { padding:11px 12px; font-size:13px; border-bottom:1px solid #f8f0f4; }
+    table.sched tr:last-child td { border-bottom:none; }
+    table.sched tr:hover td { background:#fdf8fa; }
+
+    /* Badges */
+    .badge { display:inline-block; padding:3px 9px; border-radius:20px; font-size:10px; font-weight:700; }
+    .b-done { background:#d4f5e4; color:#1a7a3e; }
+    .b-prog { background:#fff3d4; color:#9a6b00; }
+    .b-soon { background:#dbeeff; color:#1a5fa0; }
+
+    /* Treatment bars */
+    .tr-list { display:flex; flex-direction:column; gap:14px; }
+    .tr-meta { display:flex; justify-content:space-between; margin-bottom:5px; font-size:13px; }
+    .tr-name { font-weight:600; }
+    .tr-amt { color:var(--rose); font-weight:700; }
+    .bar { background:var(--rose-light); border-radius:4px; height:8px; }
+    .bar-fill { height:8px; border-radius:4px; background:linear-gradient(90deg,var(--rose),var(--gold)); }
+    .tr-sub { font-size:11px; color:var(--text-muted); margin-top:3px; }
+
+    /* Inventory */
+    .inv-list { display:flex; flex-direction:column; gap:10px; }
+    .inv-item { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:12px; font-size:13px; }
+    .inv-crit { background:#fff0f0; border:1px solid #ffd4d4; }
+    .inv-low  { background:#fffbf0; border:1px solid #ffe4b0; }
+    .inv-ok   { background:#f0fff6; border:1px solid #b0f0cc; }
+    .inv-name { font-weight:600; }
+    .inv-ct { font-weight:700; }
+    .inv-crit .inv-ct { color:var(--red); }
+    .inv-low  .inv-ct { color:var(--yellow); }
+    .inv-ok   .inv-ct { color:var(--green); }
+    .inv-sub { font-size:11px; color:#aaa; margin-top:2px; }
+    .reord {
+      font-size:11px; padding:4px 10px; border-radius:20px; border:1px solid currentColor;
+      cursor:pointer; background:none; font-weight:600;
+    }
+    .inv-crit .reord { color:var(--red); }
+    .inv-low  .reord { color:var(--yellow); }
+
+    /* Receipt FAB */
+    #fab {
+      position:fixed; bottom:28px; right:28px; z-index:1000;
+      width:60px; height:60px; border-radius:50%;
+      background:linear-gradient(135deg,var(--rose-dark),var(--rose));
+      color:white; font-size:26px; border:none; cursor:pointer;
+      box-shadow:0 6px 20px rgba(154,58,86,0.5);
+      display:flex; align-items:center; justify-content:center; transition:transform 0.2s;
+    }
+    #fab:hover { transform:scale(1.1); }
+
+    /* Modal */
+    .modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2000; align-items:center; justify-content:center; padding:20px; }
+    .modal-box { background:white; border-radius:20px; padding:28px; width:100%; max-width:460px; position:relative; }
+    .modal-close { position:absolute; top:14px; right:16px; background:none; border:none; font-size:22px; cursor:pointer; color:#bbb; }
+    .tab-bar { display:flex; background:#f5f5f5; border-radius:12px; padding:4px; margin-bottom:18px; }
+    .tab-btn { flex:1; padding:10px; border:none; border-radius:8px; font-weight:600; cursor:pointer; transition:all 0.2s; }
+    .tab-active { background:white; color:var(--rose-dark); box-shadow:0 2px 6px rgba(0,0,0,0.08); }
+    .tab-inactive { background:none; color:#999; }
+    .drop-zone {
+      border:2px dashed #e0c8d4; border-radius:12px; padding:36px; text-align:center;
+      cursor:pointer; background:#fdf8fa; transition:border-color 0.2s;
+    }
+    .drop-zone:hover { border-color:var(--rose); }
+    .submit-btn {
+      display:none; width:100%; margin-top:14px; padding:14px;
+      background:linear-gradient(135deg,var(--rose-dark),var(--rose));
+      color:white; border:none; border-radius:12px; font-size:15px; font-weight:700; cursor:pointer;
+    }
+    #mic-btn {
+      width:88px; height:88px; border-radius:50%;
+      background:linear-gradient(135deg,var(--rose-dark),var(--rose));
+      color:white; font-size:34px; border:none; cursor:pointer;
+      box-shadow:0 4px 20px rgba(154,58,86,0.4);
+      margin:10px auto; display:block; transition:transform 0.2s;
+    }
+    #mic-btn:hover { transform:scale(1.05); }
+    #transcript { display:none; background:var(--rose-light); border-radius:12px; padding:14px; font-size:14px; margin:12px 0; min-height:56px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">✨ Glow Med Spa <span>— AI Dashboard</span></div>
+    <div class="logo-sub">Saturday, June 14, 2026</div>
+  </div>
+  <div class="header-btns">
+    <a href="/medspa-office-manager" class="hbtn hbtn-ai">🤖 AI Office Manager</a>
+    <a href="/" class="hbtn hbtn-white">← Main Dashboard</a>
+  </div>
+</header>
+
+<main>
+
+  <!-- AI Banner -->
+  <div class="ai-banner">
+    <div>
+      <h3>🤖 Your AI Office Manager is Ready</h3>
+      <p>Ask anything by voice or chat: "How many appointments today?" · "Who are our top clients?" · "What's running low in inventory?"</p>
+    </div>
+    <a href="/medspa-office-manager">Open AI Manager →</a>
+  </div>
+
+  <!-- KPIs -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-icon">📅</div>
+      <div class="kpi-val">8</div>
+      <div class="kpi-label">Appointments Today</div>
+      <div class="kpi-delta up">↑ 2 more than last Saturday</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">💰</div>
+      <div class="kpi-val">$1,120</div>
+      <div class="kpi-label">Revenue Collected Today</div>
+      <div class="kpi-delta warn">+ $1,490 pending (5 upcoming)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">📈</div>
+      <div class="kpi-val">$28,450</div>
+      <div class="kpi-label">Revenue This Month</div>
+      <div class="kpi-delta up">↑ 14% vs last June</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">👥</div>
+      <div class="kpi-val">47</div>
+      <div class="kpi-label">Active Clients This Month</div>
+      <div class="kpi-delta up">↑ 5 new clients this week</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">⚠️</div>
+      <div class="kpi-val red">3</div>
+      <div class="kpi-label">Products Need Reorder</div>
+      <div class="kpi-delta warn">Botox critically low</div>
+    </div>
+  </div>
+
+  <!-- Schedule + Treatments -->
+  <div class="two-col">
+
+    <div class="card">
+      <div class="card-hd">
+        <h3>📅 Today's Schedule — June 14</h3>
+        <span style="font-size:12px;color:var(--text-muted)">8 appointments</span>
+      </div>
+      <table class="sched">
+        <thead><tr><th>Time</th><th>Client</th><th>Treatment</th><th>Provider</th><th>Revenue</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>9:00 AM</td><td><strong>Sarah Johnson</strong></td><td>Botox</td><td>Dr. Kim</td><td>$350</td><td><span class="badge b-done">Done</span></td></tr>
+          <tr><td>10:00 AM</td><td><strong>Emily Chen</strong></td><td>HydraFacial</td><td>Lisa</td><td>$150</td><td><span class="badge b-done">Done</span></td></tr>
+          <tr><td>11:00 AM</td><td><strong>Maria Garcia</strong></td><td>Lip Filler</td><td>Dr. Kim</td><td>$500</td><td><span class="badge b-done">Done</span></td></tr>
+          <tr><td>12:30 PM</td><td><strong>Amanda White</strong></td><td>Chemical Peel</td><td>Lisa</td><td>$120</td><td><span class="badge b-prog">In Progress</span></td></tr>
+          <tr><td>1:30 PM</td><td><strong>Jennifer Lee</strong></td><td>Microneedling</td><td>Dr. Kim</td><td>$200</td><td><span class="badge b-soon">Upcoming</span></td></tr>
+          <tr><td>2:45 PM</td><td><strong>Rachel Brown</strong></td><td>Botox</td><td>Dr. Kim</td><td>$350</td><td><span class="badge b-soon">Upcoming</span></td></tr>
+          <tr><td>4:00 PM</td><td><strong>Ashley Davis</strong></td><td>HydraFacial</td><td>Lisa</td><td>$150</td><td><span class="badge b-soon">Upcoming</span></td></tr>
+          <tr><td>5:00 PM</td><td><strong>Monica Wilson</strong></td><td>Waxing</td><td>Staff</td><td>$60</td><td><span class="badge b-soon">Upcoming</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-hd">
+        <h3>💉 Top Treatments — June</h3>
+        <span style="font-size:12px;color:var(--text-muted)">By revenue</span>
+      </div>
+      <div class="card-body">
+        <div class="tr-list">
+          <div><div class="tr-meta"><span class="tr-name">Botox</span><span class="tr-amt">$15,750</span></div><div class="bar"><div class="bar-fill" style="width:100%"></div></div><div class="tr-sub">45 sessions</div></div>
+          <div><div class="tr-meta"><span class="tr-name">Lip / Cheek Filler</span><span class="tr-amt">$14,000</span></div><div class="bar"><div class="bar-fill" style="width:89%"></div></div><div class="tr-sub">28 sessions</div></div>
+          <div><div class="tr-meta"><span class="tr-name">HydraFacial</span><span class="tr-amt">$9,300</span></div><div class="bar"><div class="bar-fill" style="width:59%"></div></div><div class="tr-sub">62 sessions</div></div>
+          <div><div class="tr-meta"><span class="tr-name">Chemical Peel</span><span class="tr-amt">$4,560</span></div><div class="bar"><div class="bar-fill" style="width:29%"></div></div><div class="tr-sub">38 sessions</div></div>
+          <div><div class="tr-meta"><span class="tr-name">Microneedling</span><span class="tr-amt">$4,400</span></div><div class="bar"><div class="bar-fill" style="width:28%"></div></div><div class="tr-sub">22 sessions</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inventory -->
+  <div class="card">
+    <div class="card-hd">
+      <h3>📦 Inventory Status</h3>
+      <span style="font-size:12px;color:var(--red);font-weight:700">3 critical — reorder now</span>
+    </div>
+    <div class="card-body">
+      <div class="inv-list">
+        <div class="inv-item inv-crit">
+          <div><div class="inv-name">Botox — Allergan 100U</div><div class="inv-sub">Min: 10 vials</div></div>
+          <div style="display:flex;align-items:center;gap:12px"><span class="inv-ct">3 vials</span><button class="reord">Order Now</button></div>
+        </div>
+        <div class="inv-item inv-crit">
+          <div><div class="inv-name">Juvederm Ultra Plus</div><div class="inv-sub">Min: 5 syringes</div></div>
+          <div style="display:flex;align-items:center;gap:12px"><span class="inv-ct">2 syringes</span><button class="reord">Order Now</button></div>
+        </div>
+        <div class="inv-item inv-crit">
+          <div><div class="inv-name">AHA Peel Solution 30%</div><div class="inv-sub">Min: 3 bottles</div></div>
+          <div style="display:flex;align-items:center;gap:12px"><span class="inv-ct">1 bottle</span><button class="reord">Order Now</button></div>
+        </div>
+        <div class="inv-item inv-low">
+          <div><div class="inv-name">Restylane Lyft</div><div class="inv-sub">Min: 8 syringes</div></div>
+          <div style="display:flex;align-items:center;gap:12px"><span class="inv-ct">5 syringes</span><button class="reord">Reorder Soon</button></div>
+        </div>
+        <div class="inv-item inv-low">
+          <div><div class="inv-name">Numbing Cream — EMLA</div><div class="inv-sub">Min: 15 tubes</div></div>
+          <div style="display:flex;align-items:center;gap:12px"><span class="inv-ct">12 tubes</span><button class="reord">Reorder Soon</button></div>
+        </div>
+        <div class="inv-item inv-ok">
+          <div><div class="inv-name">HydraFacial Tips</div><div class="inv-sub">Min: 20 units</div></div>
+          <div style="display:flex;align-items:center;gap:12px"><span class="inv-ct">48 units</span></div>
+        </div>
+        <div class="inv-item inv-ok">
+          <div><div class="inv-name">After-care Glow Serum</div><div class="inv-sub">Min: 10 units</div></div>
+          <div style="display:flex;align-items:center;gap:12px"><span class="inv-ct">24 units</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- FAB -->
+<button id="fab" onclick="document.getElementById('receipt-modal').style.display='flex'" title="Add Receipt">🧾</button>
+
+<!-- Receipt Modal -->
+<div id="receipt-modal" class="modal-bg">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <h2 style="margin-bottom:18px;font-size:20px">Add Receipt</h2>
+    <div class="tab-bar">
+      <button id="tab-cam" class="tab-btn tab-active" onclick="switchTab('cam')">📷 Photo</button>
+      <button id="tab-vox" class="tab-btn tab-inactive" onclick="switchTab('vox')">🎙️ Voice</button>
+    </div>
+    <div id="panel-cam">
+      <input type="file" id="file-in" accept="image/*" capture="environment" style="display:none" onchange="handleFile(this)">
+      <div class="drop-zone" onclick="document.getElementById('file-in').click()">
+        <div style="font-size:38px">📸</div>
+        <div style="font-weight:600;margin:8px 0;font-size:15px">Tap to take photo or upload</div>
+        <div style="font-size:12px;color:#999">AI will read the receipt automatically</div>
+      </div>
+      <img id="preview" style="display:none;width:100%;border-radius:12px;margin-top:12px">
+      <button id="sub-cam" class="submit-btn" onclick="submitReceipt('camera')">Send to Manager →</button>
+    </div>
+    <div id="panel-vox" style="display:none;text-align:center">
+      <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px">Just say the receipt details — vendor, amount, what it was for</p>
+      <button id="mic-btn" onclick="toggleVoice()">🎙️</button>
+      <div id="listen-txt" style="color:#999;font-size:13px;margin:8px 0">Tap mic and speak</div>
+      <div id="transcript"></div>
+      <button id="sub-vox" class="submit-btn" onclick="submitReceipt('voice')">Send to Manager →</button>
+    </div>
+    <div id="receipt-ok" style="display:none;text-align:center;padding:24px 0">
+      <div style="font-size:52px">✅</div>
+      <div style="font-weight:700;font-size:18px;margin:10px 0">Receipt Sent!</div>
+      <div style="color:#888;font-size:14px">Manager will review. QuickBooks posts automatically after approval.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const WEBHOOK = 'https://n8n.srv1677798.hstgr.cloud/webhook/receipt-intake';
+  let imgB64='', voiceTxt='', isListening=false, recog=null;
+
+  function closeModal() {
+    document.getElementById('receipt-modal').style.display='none';
+    document.getElementById('receipt-ok').style.display='none';
+    document.getElementById('panel-cam').style.display='block';
+    document.getElementById('panel-vox').style.display='none';
+    document.getElementById('preview').style.display='none';
+    document.getElementById('sub-cam').style.display='none';
+    document.getElementById('sub-vox').style.display='none';
+    document.getElementById('transcript').style.display='none';
+    imgB64=''; voiceTxt='';
+  }
+
+  function switchTab(t) {
+    document.getElementById('panel-cam').style.display = t==='cam'?'block':'none';
+    document.getElementById('panel-vox').style.display = t==='vox'?'block':'none';
+    document.getElementById('tab-cam').className = 'tab-btn '+(t==='cam'?'tab-active':'tab-inactive');
+    document.getElementById('tab-vox').className = 'tab-btn '+(t==='vox'?'tab-active':'tab-inactive');
+  }
+
+  function handleFile(inp) {
+    const f=inp.files[0]; if(!f) return;
+    const r=new FileReader();
+    r.onload=e=>{
+      imgB64=e.target.result.split(',')[1];
+      document.getElementById('preview').src=e.target.result;
+      document.getElementById('preview').style.display='block';
+      document.getElementById('sub-cam').style.display='block';
+    };
+    r.readAsDataURL(f);
+  }
+
+  function toggleVoice() {
+    if(isListening){ recog?.stop(); return; }
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){ alert('Voice not supported. Use Chrome.'); return; }
+    recog=new SR(); recog.continuous=false; recog.lang='en-US';
+    recog.onstart=()=>{ isListening=true; document.getElementById('mic-btn').textContent='⏹'; document.getElementById('listen-txt').textContent='🔴 Listening...'; };
+    recog.onresult=e=>{
+      voiceTxt=Array.from(e.results).map(r=>r[0].transcript).join(' ');
+      document.getElementById('transcript').innerHTML='<strong>You said:</strong><br>'+voiceTxt;
+      document.getElementById('transcript').style.display='block';
+      document.getElementById('sub-vox').style.display='block';
+    };
+    recog.onend=()=>{ isListening=false; document.getElementById('mic-btn').textContent='🎙️'; document.getElementById('listen-txt').textContent='Tap mic to record again'; };
+    recog.start();
+  }
+
+  async function submitReceipt(src) {
+    const body=src==='camera'?{image_base64:imgB64,source:'camera',business_type:'medspa'}:{voice_text:voiceTxt,source:'voice',business_type:'medspa'};
+    try{ await fetch(WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch(e){}
+    document.getElementById('panel-cam').style.display='none';
+    document.getElementById('panel-vox').style.display='none';
+    document.getElementById('receipt-ok').style.display='block';
+    speak('Receipt sent! Manager will review and approve. QuickBooks will post automatically.');
+    setTimeout(closeModal, 4200);
+  }
+
+  function speak(t){ const u=new SpeechSynthesisUtterance(t); u.rate=0.95; speechSynthesis.cancel(); speechSynthesis.speak(u); }
+</script>
+</body>
+</html>

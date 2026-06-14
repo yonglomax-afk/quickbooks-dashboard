@@ -317,5 +317,194 @@ Rules:
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+//  MED SPA — Routes + AI Office Manager
+// ════════════════════════════════════════════════════════════════════════════
+
+app.get('/medspa',                (req, res) => res.sendFile(path.join(__dirname, 'medspa-dashboard.html')));
+app.get('/medspa-office-manager', (req, res) => res.sendFile(path.join(__dirname, 'medspa-office-manager.html')));
+
+// Sample Med Spa data — replace with Google Sheets API calls when ready
+const MEDSPA = {
+  appointments: [
+    { time:'9:00 AM',  client:'Sarah Johnson',  treatment:'Botox',         provider:'Dr. Kim', revenue:350, status:'Completed' },
+    { time:'10:00 AM', client:'Emily Chen',      treatment:'HydraFacial',   provider:'Lisa',    revenue:150, status:'Completed' },
+    { time:'11:00 AM', client:'Maria Garcia',    treatment:'Lip Filler',    provider:'Dr. Kim', revenue:500, status:'Completed' },
+    { time:'12:30 PM', client:'Amanda White',    treatment:'Chemical Peel', provider:'Lisa',    revenue:120, status:'In Progress' },
+    { time:'1:30 PM',  client:'Jennifer Lee',    treatment:'Microneedling', provider:'Dr. Kim', revenue:200, status:'Upcoming' },
+    { time:'2:45 PM',  client:'Rachel Brown',    treatment:'Botox',         provider:'Dr. Kim', revenue:350, status:'Upcoming' },
+    { time:'4:00 PM',  client:'Ashley Davis',    treatment:'HydraFacial',   provider:'Lisa',    revenue:150, status:'Upcoming' },
+    { time:'5:00 PM',  client:'Monica Wilson',   treatment:'Waxing',        provider:'Staff',   revenue:60,  status:'Upcoming' },
+  ],
+  clients: [
+    { name:'Amanda White',    visits:31, total_spent:11500, last_visit:'2026-06-14', email:'amanda@email.com' },
+    { name:'Sarah Johnson',   visits:24, total_spent:8400,  last_visit:'2026-06-14', email:'sarah@email.com' },
+    { name:'Emily Chen',      visits:18, total_spent:6200,  last_visit:'2026-06-14', email:'emily@email.com' },
+    { name:'Jennifer Lee',    visits:15, total_spent:5800,  last_visit:'2026-06-14', email:'jen@email.com' },
+    { name:'Maria Garcia',    visits:8,  total_spent:4200,  last_visit:'2026-06-14', email:'maria@email.com' },
+    { name:'Rachel Brown',    visits:12, total_spent:3900,  last_visit:'2026-05-22', email:'rachel@email.com' },
+    { name:'Ashley Davis',    visits:6,  total_spent:2100,  last_visit:'2026-06-14', email:'ashley@email.com' },
+    { name:'Patricia Moore',  visits:4,  total_spent:1600,  last_visit:'2026-03-05', email:'pat@email.com' },
+    { name:'Linda Harris',    visits:3,  total_spent:900,   last_visit:'2026-02-18', email:'linda@email.com' },
+    { name:'Karen Williams',  visits:2,  total_spent:500,   last_visit:'2026-01-30', email:'karen@email.com' },
+  ],
+  treatments: [
+    { name:'Botox',           sessions:45, revenue:15750 },
+    { name:'Lip/Cheek Filler',sessions:28, revenue:14000 },
+    { name:'HydraFacial',     sessions:62, revenue:9300  },
+    { name:'Chemical Peel',   sessions:38, revenue:4560  },
+    { name:'Microneedling',   sessions:22, revenue:4400  },
+    { name:'Waxing',          sessions:55, revenue:2750  },
+  ],
+  inventory: [
+    { name:'Botox — Allergan 100U',  stock:3,  min:10, status:'Critical', unit:'vials'     },
+    { name:'Juvederm Ultra Plus',     stock:2,  min:5,  status:'Critical', unit:'syringes'  },
+    { name:'AHA Peel Solution 30%',   stock:1,  min:3,  status:'Critical', unit:'bottles'   },
+    { name:'Restylane Lyft',          stock:5,  min:8,  status:'Low',      unit:'syringes'  },
+    { name:'Numbing Cream EMLA',      stock:12, min:15, status:'Low',      unit:'tubes'     },
+    { name:'HydraFacial Tips',        stock:48, min:20, status:'OK',       unit:'units'     },
+    { name:'After-care Glow Serum',   stock:24, min:10, status:'OK',       unit:'units'     },
+  ],
+  revenue: { today_collected:1120, today_potential:2610, month:28450, last_month:24960 }
+};
+
+function medSpaAppointmentAgent({ query_type }) {
+  const apts = MEDSPA.appointments;
+  const today = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+  switch (query_type) {
+    case 'today':
+      return { date:today, total:apts.length, completed:apts.filter(a=>a.status==='Completed').length, in_progress:apts.filter(a=>a.status==='In Progress').length, upcoming:apts.filter(a=>a.status==='Upcoming').length, appointments:apts };
+    case 'revenue_today':
+      return { collected:MEDSPA.revenue.today_collected, potential:MEDSPA.revenue.today_potential, completed_apts:apts.filter(a=>a.status==='Completed') };
+    case 'upcoming':
+      return { upcoming:apts.filter(a=>a.status==='Upcoming') };
+    case 'by_provider':
+      const byProv = {};
+      apts.forEach(a=>{ byProv[a.provider]=(byProv[a.provider]||[]).concat(a); });
+      return { by_provider: Object.entries(byProv).map(([p,list])=>({provider:p, count:list.length, revenue:list.reduce((s,a)=>s+a.revenue,0)})) };
+    default:
+      return { total:apts.length, appointments:apts };
+  }
+}
+
+function medSpaClientAgent({ query_type, client_name }) {
+  const clients = MEDSPA.clients;
+  const today = new Date();
+  switch (query_type) {
+    case 'top_spenders':
+      return { top_clients:clients.sort((a,b)=>b.total_spent-a.total_spent).slice(0,5) };
+    case 'inactive':
+      const cutoff = new Date(today - 90*24*60*60*1000);
+      const inactive = clients.filter(c=>new Date(c.last_visit)<cutoff);
+      return { count:inactive.length, clients:inactive, message:`${inactive.length} clients haven't visited in over 90 days — consider sending a follow-up message.` };
+    case 'by_name':
+      const found = client_name ? clients.filter(c=>c.name.toLowerCase().includes(client_name.toLowerCase())) : clients;
+      return { clients:found };
+    case 'retention':
+      return { total_clients:clients.length, active_this_month:MEDSPA.appointments.map(a=>a.client).filter((v,i,s)=>s.indexOf(v)===i).length, avg_visits: (clients.reduce((s,c)=>s+c.visits,0)/clients.length).toFixed(1) };
+    default:
+      return { total:clients.length, clients:clients.slice(0,5) };
+  }
+}
+
+function medSpaRevenueAgent({ query_type }) {
+  const treats = MEDSPA.treatments;
+  switch (query_type) {
+    case 'by_treatment':
+      return { treatments:treats.sort((a,b)=>b.revenue-a.revenue) };
+    case 'top_treatment':
+      const top = treats.sort((a,b)=>b.revenue-a.revenue)[0];
+      return { top_treatment:top, message:`${top.name} is your highest-earning treatment this month at $${top.revenue.toLocaleString()} across ${top.sessions} sessions.` };
+    case 'monthly':
+      return { month:'June 2026', revenue:MEDSPA.revenue.month, last_month:MEDSPA.revenue.last_month, growth_pct:(((MEDSPA.revenue.month-MEDSPA.revenue.last_month)/MEDSPA.revenue.last_month)*100).toFixed(1), total_sessions:treats.reduce((s,t)=>s+t.sessions,0) };
+    case 'today':
+      return { collected:MEDSPA.revenue.today_collected, potential:MEDSPA.revenue.today_potential };
+    default:
+      return { month_revenue:MEDSPA.revenue.month, today_collected:MEDSPA.revenue.today_collected, top_treatment:treats.sort((a,b)=>b.revenue-a.revenue)[0]?.name };
+  }
+}
+
+function medSpaInventoryAgent({ query_type }) {
+  const inv = MEDSPA.inventory;
+  switch (query_type) {
+    case 'low_stock':
+      const low = inv.filter(i=>i.status==='Critical'||i.status==='Low');
+      return { count:low.length, critical:inv.filter(i=>i.status==='Critical'), low:inv.filter(i=>i.status==='Low') };
+    case 'critical':
+      return { critical:inv.filter(i=>i.status==='Critical'), message:`${inv.filter(i=>i.status==='Critical').length} products are critically low and need to be ordered immediately.` };
+    case 'all':
+      return { inventory:inv };
+    default:
+      return { total_items:inv.length, critical:inv.filter(i=>i.status==='Critical').length, low:inv.filter(i=>i.status==='Low').length, ok:inv.filter(i=>i.status==='OK').length };
+  }
+}
+
+// ── POST /api/medspa-chat — Med Spa AI Office Manager
+app.post('/api/medspa-chat', async (req, res) => {
+  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+  if (!CLAUDE_KEY) return res.json({ answer:'Add CLAUDE_API_KEY to Railway environment variables.', agents:[] });
+
+  const { message, history = [] } = req.body;
+
+  const tools = [
+    { name:'appointment_agent', description:'Get appointment data — today\'s schedule, upcoming, by provider, revenue from appointments.', input_schema:{ type:'object', properties:{ query_type:{type:'string',enum:['today','upcoming','revenue_today','by_provider','all']} }, required:['query_type'] } },
+    { name:'client_agent',      description:'Get client data — top spenders, inactive clients, retention, client search.', input_schema:{ type:'object', properties:{ query_type:{type:'string',enum:['top_spenders','inactive','by_name','retention','all']}, client_name:{type:'string'} }, required:['query_type'] } },
+    { name:'revenue_agent',     description:'Get revenue data — monthly revenue, by treatment, best performing treatment, today\'s revenue.', input_schema:{ type:'object', properties:{ query_type:{type:'string',enum:['monthly','by_treatment','top_treatment','today','all']} }, required:['query_type'] } },
+    { name:'inventory_agent',   description:'Get inventory data — low stock, critical items needing reorder, all products.', input_schema:{ type:'object', properties:{ query_type:{type:'string',enum:['low_stock','critical','all','summary']} }, required:['query_type'] } },
+  ];
+
+  const SYSTEM = `You are an AI Office Manager for Glow Med Spa. You route questions to specialized sub-agents (Appointment, Client, Revenue, Inventory) and deliver clear, helpful answers.
+Rules:
+- Be concise and warm — you work for a med spa
+- Use exact numbers from the data
+- Use natural sentences, not bullet points
+- If inventory is critical, always mention it urgently
+- Format dollars as $X,XXX`;
+
+  const messages = [
+    ...history.slice(-6).map(h=>({ role:h.role, content:h.content })),
+    { role:'user', content:message }
+  ];
+
+  try {
+    const first = await axios.post('https://api.anthropic.com/v1/messages',
+      { model:'claude-sonnet-4-6', max_tokens:1024, system:SYSTEM, tools, messages },
+      { headers:{'x-api-key':CLAUDE_KEY,'anthropic-version':'2023-06-01','content-type':'application/json'} }
+    );
+    const firstContent = first.data.content;
+    const agentsUsed = [];
+
+    if (first.data.stop_reason === 'tool_use') {
+      const toolUses = firstContent.filter(c=>c.type==='tool_use');
+      const toolResults = [];
+      for (const tu of toolUses) {
+        agentsUsed.push(tu.name);
+        let result;
+        try {
+          if      (tu.name==='appointment_agent') result = medSpaAppointmentAgent(tu.input);
+          else if (tu.name==='client_agent')      result = medSpaClientAgent(tu.input);
+          else if (tu.name==='revenue_agent')     result = medSpaRevenueAgent(tu.input);
+          else if (tu.name==='inventory_agent')   result = medSpaInventoryAgent(tu.input);
+          else result = { error:'Unknown agent' };
+        } catch(e) { result = { error:e.message }; }
+        toolResults.push({ type:'tool_result', tool_use_id:tu.id, content:JSON.stringify(result) });
+      }
+      const final = await axios.post('https://api.anthropic.com/v1/messages',
+        { model:'claude-sonnet-4-6', max_tokens:512, system:SYSTEM, tools, messages:[...messages,{role:'assistant',content:firstContent},{role:'user',content:toolResults}] },
+        { headers:{'x-api-key':CLAUDE_KEY,'anthropic-version':'2023-06-01','content-type':'application/json'} }
+      );
+      const answer = final.data.content.find(c=>c.type==='text')?.text || 'I could not find that information.';
+      return res.json({ answer, agents:agentsUsed });
+    }
+
+    const answer = firstContent.find(c=>c.type==='text')?.text || 'I could not process that.';
+    res.json({ answer, agents:[] });
+
+  } catch(e) {
+    console.error('Med Spa chat error:', e.response?.data || e.message);
+    res.status(500).json({ answer:'I had trouble getting that information. Please try again.', agents:[] });
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`✅ QuickBooks Dashboard running on port ${PORT}`));
