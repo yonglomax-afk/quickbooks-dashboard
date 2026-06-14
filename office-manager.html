@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Office Manager</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Header ── */
+    .header {
+      background: #1a1f2e; border-bottom: 1px solid #2d3748;
+      padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+    }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .logo { width: 42px; height: 42px; background: linear-gradient(135deg,#4f6ef7,#7c3aed); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+    .header h1 { font-size: 20px; font-weight: 800; color: #fff; }
+    .header p  { font-size: 12px; color: #64748b; margin-top: 2px; }
+    .back-btn { background: #2d3748; color: #94a3b8; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; text-decoration: none; display: flex; align-items: center; gap: 6px; }
+    .back-btn:hover { background: #374151; color: #e2e8f0; }
+
+    /* ── Sub-agent pills ── */
+    .agents-bar {
+      background: #151821; border-bottom: 1px solid #1e2535;
+      padding: 10px 24px; display: flex; gap: 10px; flex-wrap: wrap; flex-shrink: 0;
+    }
+    .agent-pill {
+      padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
+      border: 1px solid #2d3748; color: #64748b; background: #1a1f2e;
+      transition: all 0.3s; display: flex; align-items: center; gap: 6px;
+    }
+    .agent-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: #374151; transition: all 0.3s; }
+    .agent-pill.active { border-color: #4f6ef7; color: #a5b4fc; background: #1e2541; }
+    .agent-pill.active .dot { background: #4f6ef7; box-shadow: 0 0 6px #4f6ef7; animation: blink 1s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ── Chat area ── */
+    .chat { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+    .chat::-webkit-scrollbar { width: 4px; }
+    .chat::-webkit-scrollbar-track { background: transparent; }
+    .chat::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 2px; }
+
+    /* Messages */
+    .msg { display: flex; gap: 12px; max-width: 85%; animation: fadeUp 0.3s ease; }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+    .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+    .msg.assistant { align-self: flex-start; }
+
+    .avatar { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+    .msg.user .avatar     { background: #1e40af; }
+    .msg.assistant .avatar { background: linear-gradient(135deg,#4f6ef7,#7c3aed); }
+
+    .bubble { padding: 12px 16px; border-radius: 16px; font-size: 14px; line-height: 1.6; }
+    .msg.user .bubble      { background: #1e3a8a; color: #bfdbfe; border-bottom-right-radius: 4px; }
+    .msg.assistant .bubble { background: #1e2535; color: #e2e8f0; border-bottom-left-radius: 4px; }
+
+    .agent-label { font-size: 11px; color: #4f6ef7; font-weight: 600; margin-bottom: 4px; letter-spacing: 0.5px; }
+    .speak-btn { background: none; border: none; color: #4f6ef7; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px; margin-top: 6px; display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; }
+    .speak-btn:hover { background: #1a2744; }
+
+    /* Typing indicator */
+    .typing { display: flex; gap: 5px; padding: 14px 16px; background: #1e2535; border-radius: 16px; border-bottom-left-radius: 4px; }
+    .typing span { width: 7px; height: 7px; background: #4f6ef7; border-radius: 50%; animation: bounce 1.2s infinite; }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%,60%,100%{transform:none} 30%{transform:translateY(-6px)} }
+
+    /* Welcome card */
+    .welcome { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 16px; padding: 24px; max-width: 520px; align-self: center; margin: auto; text-align: center; }
+    .welcome h2 { font-size: 22px; font-weight: 800; color: #fff; margin-bottom: 8px; }
+    .welcome p  { color: #64748b; font-size: 14px; margin-bottom: 20px; }
+    .examples { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+    .ex { background: #0f1117; border: 1px solid #2d3748; border-radius: 10px; padding: 10px 14px; cursor: pointer; font-size: 13px; color: #94a3b8; transition: all 0.2s; display: flex; align-items: center; gap: 10px; }
+    .ex:hover { border-color: #4f6ef7; color: #a5b4fc; background: #151e35; }
+    .ex-icon { font-size: 16px; }
+
+    /* ── Input bar ── */
+    .input-bar {
+      background: #1a1f2e; border-top: 1px solid #2d3748;
+      padding: 16px 24px; display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0;
+    }
+    .input-wrap { flex: 1; position: relative; }
+    #msgInput {
+      width: 100%; background: #0f1117; border: 1px solid #2d3748; border-radius: 12px;
+      padding: 12px 16px; color: #e2e8f0; font-size: 15px; outline: none; resize: none;
+      max-height: 100px; font-family: inherit; line-height: 1.5;
+      transition: border-color 0.2s;
+    }
+    #msgInput:focus { border-color: #4f6ef7; }
+    #msgInput::placeholder { color: #4a5568; }
+
+    .mic-btn, .send-btn {
+      width: 46px; height: 46px; border-radius: 12px; border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; font-size: 20px;
+      flex-shrink: 0; transition: all 0.2s;
+    }
+    .mic-btn { background: #1e2535; color: #64748b; }
+    .mic-btn:hover   { background: #2d3748; color: #a5b4fc; }
+    .mic-btn.on      { background: #7f1d1d; color: #fca5a5; animation: micPulse 1.5s infinite; }
+    @keyframes micPulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)} 50%{box-shadow:0 0 0 10px rgba(239,68,68,0)} }
+    .send-btn { background: #4f6ef7; color: white; }
+    .send-btn:hover    { background: #3b5bdb; }
+    .send-btn:disabled { background: #1e2535; color: #374151; cursor: not-allowed; }
+
+    .hint { font-size: 11px; color: #374151; text-align: center; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">🏢</div>
+    <div>
+      <h1>AI Office Manager</h1>
+      <p>Invoices · Cash Flow · Customers · Expenses · Receipts</p>
+    </div>
+  </div>
+  <a href="/" class="back-btn">← Dashboard</a>
+</div>
+
+<!-- Sub-agent status bar -->
+<div class="agents-bar">
+  <div class="agent-pill" id="pill-invoice">   <span class="dot"></span>Invoice Agent</div>
+  <div class="agent-pill" id="pill-cash_flow"> <span class="dot"></span>Cash Flow Agent</div>
+  <div class="agent-pill" id="pill-customer">  <span class="dot"></span>Customer Agent</div>
+  <div class="agent-pill" id="pill-expense">   <span class="dot"></span>Expense Agent</div>
+  <div class="agent-pill" id="pill-receipt">   <span class="dot"></span>Receipt Agent</div>
+</div>
+
+<!-- Chat area -->
+<div class="chat" id="chat">
+  <div class="welcome" id="welcome">
+    <h2>Good morning 👋</h2>
+    <p>Ask me anything about your business — by voice or text.</p>
+    <div class="examples">
+      <div class="ex" onclick="sendExample(this.dataset.q)" data-q="How many overdue invoices do we have?"><span class="ex-icon">📄</span> How many overdue invoices do we have?</div>
+      <div class="ex" onclick="sendExample(this.dataset.q)" data-q="What is our net income this month?"><span class="ex-icon">💰</span> What is our net income this month?</div>
+      <div class="ex" onclick="sendExample(this.dataset.q)" data-q="Who owes us the most money?"><span class="ex-icon">👥</span> Who owes us the most money?</div>
+      <div class="ex" onclick="sendExample(this.dataset.q)" data-q="What did we spend on expenses this month?"><span class="ex-icon">🧾</span> What did we spend on expenses this month?</div>
+      <div class="ex" onclick="sendExample(this.dataset.q)" data-q="Show me all unpaid invoices"><span class="ex-icon">⚠️</span> Show me all unpaid invoices</div>
+    </div>
+  </div>
+</div>
+
+<!-- Input bar -->
+<div class="input-bar">
+  <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="Voice input">🎙️</button>
+  <div class="input-wrap">
+    <textarea id="msgInput" rows="1" placeholder="Ask anything about your business…" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+  </div>
+  <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send">➤</button>
+</div>
+<div class="hint" id="hint">Press Enter to send · Shift+Enter for new line · or tap 🎙️ to speak</div>
+
+<script>
+  let chatHistory = [];
+  let recognition = null;
+  let isListening = false;
+  let isSpeaking  = false;
+  let currentUtterance = null;
+
+  // ── Voice Input ──────────────────────────────────────────────────────────
+  function toggleMic() {
+    if (isListening) stopMic();
+    else startMic();
+  }
+
+  function startMic() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { appendMsg('assistant', 'Voice input not supported on this browser. Please use Chrome or Safari.', []); return; }
+    recognition = new SR();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    recognition.onstart = () => {
+      isListening = true;
+      document.getElementById('micBtn').classList.add('on');
+      document.getElementById('micBtn').textContent = '⏹';
+      document.getElementById('hint').textContent = 'Listening… speak your question';
+      document.getElementById('msgInput').placeholder = 'Listening…';
+    };
+    recognition.onresult = (e) => {
+      let transcript = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) transcript += e.results[i][0].transcript;
+      document.getElementById('msgInput').value = transcript;
+      autoResize(document.getElementById('msgInput'));
+    };
+    recognition.onend = () => {
+      stopMic();
+      const val = document.getElementById('msgInput').value.trim();
+      if (val) sendMessage();
+    };
+    recognition.onerror = () => stopMic();
+    recognition.start();
+  }
+
+  function stopMic() {
+    isListening = false;
+    try { recognition.stop(); } catch(e) {}
+    document.getElementById('micBtn').classList.remove('on');
+    document.getElementById('micBtn').textContent = '🎙️';
+    document.getElementById('hint').textContent = "Press Enter to send · Shift+Enter for new line · or tap 🎙️ to speak";
+    document.getElementById('msgInput').placeholder = 'Ask anything about your business…';
+  }
+
+  // ── Voice Output ─────────────────────────────────────────────────────────
+  function speak(text) {
+    window.speechSynthesis.cancel();
+    const clean = text.replace(/[*_#`]/g, '').replace(/\$(\d)/g, '$$$1');
+    const utt = new SpeechSynthesisUtterance(clean);
+    utt.rate = 1.0; utt.pitch = 1.0;
+    const voices = window.speechSynthesis.getVoices();
+    const preferred = voices.find(v => v.name.includes('Samantha') || v.name.includes('Google US English') || (v.lang === 'en-US' && v.localService));
+    if (preferred) utt.voice = preferred;
+    currentUtterance = utt;
+    isSpeaking = true;
+    utt.onend = () => { isSpeaking = false; currentUtterance = null; };
+    window.speechSynthesis.speak(utt);
+  }
+
+  function stopSpeaking() {
+    window.speechSynthesis.cancel();
+    isSpeaking = false;
+  }
+
+  // ── Send message ─────────────────────────────────────────────────────────
+  function sendExample(q) {
+    document.getElementById('msgInput').value = q;
+    sendMessage();
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  }
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+  }
+
+  async function sendMessage() {
+    const input = document.getElementById('msgInput');
+    const msg   = input.value.trim();
+    if (!msg) return;
+
+    stopSpeaking();
+    document.getElementById('welcome')?.remove();
+    input.value = '';
+    input.style.height = 'auto';
+
+    appendMsg('user', msg, []);
+    chatHistory.push({ role: 'user', content: msg });
+
+    showTyping();
+    setAgents([]);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, history: chatHistory.slice(-8) })
+      });
+      const data = await res.json();
+      hideTyping();
+      setAgents(data.agents || []);
+      appendMsg('assistant', data.answer, data.agents || []);
+      chatHistory.push({ role: 'assistant', content: data.answer });
+      speak(data.answer);
+      setTimeout(() => setAgents([]), 3000);
+    } catch(e) {
+      hideTyping();
+      appendMsg('assistant', 'Sorry, I could not connect. Please try again.', []);
+    }
+  }
+
+  // ── UI Helpers ───────────────────────────────────────────────────────────
+  function appendMsg(role, text, agents) {
+    const chat = document.getElementById('chat');
+    const div  = document.createElement('div');
+    div.className = 'msg ' + role;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'user' ? '👤' : '🏢';
+
+    const wrap = document.createElement('div');
+
+    if (role === 'assistant' && agents?.length) {
+      const lbl = document.createElement('div');
+      lbl.className = 'agent-label';
+      lbl.textContent = '⚡ ' + agents.map(a => a.replace('_agent','').replace('_',' ').toUpperCase() + ' AGENT').join(' + ');
+      wrap.appendChild(lbl);
+    }
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = text;
+
+    if (role === 'assistant') {
+      const speakBtn = document.createElement('button');
+      speakBtn.className = 'speak-btn';
+      speakBtn.innerHTML = '🔊 Read aloud';
+      speakBtn.onclick = () => {
+        if (isSpeaking) { stopSpeaking(); speakBtn.innerHTML = '🔊 Read aloud'; }
+        else { speak(text); speakBtn.innerHTML = '⏹ Stop'; setTimeout(() => speakBtn.innerHTML = '🔊 Read aloud', text.length * 60); }
+      };
+      wrap.appendChild(bubble);
+      wrap.appendChild(speakBtn);
+    } else {
+      wrap.appendChild(bubble);
+    }
+
+    div.appendChild(avatar);
+    div.appendChild(wrap);
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  let typingEl = null;
+  function showTyping() {
+    const chat = document.getElementById('chat');
+    typingEl = document.createElement('div');
+    typingEl.className = 'msg assistant';
+    typingEl.id = 'typing';
+    typingEl.innerHTML = '<div class="avatar">🏢</div><div class="typing"><span></span><span></span><span></span></div>';
+    chat.appendChild(typingEl);
+    chat.scrollTop = chat.scrollHeight;
+  }
+  function hideTyping() { document.getElementById('typing')?.remove(); }
+
+  function setAgents(active) {
+    const map = { invoice_agent:'invoice', cash_flow_agent:'cash_flow', customer_agent:'customer', expense_agent:'expense', receipt_agent:'receipt' };
+    document.querySelectorAll('.agent-pill').forEach(p => p.classList.remove('active'));
+    active.forEach(a => { const id = 'pill-' + (map[a] || a); document.getElementById(id)?.classList.add('active'); });
+  }
+
+  // Load voices for speech synthesis
+  window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+</script>
+</body>
+</html>
