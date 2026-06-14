@@ -263,14 +263,15 @@ app.post('/api/chat', async (req, res) => {
     { name: 'expense_agent',   description: 'Get expense and purchase data — total spending, by vendor, by category, recent purchases. Use for expense questions.', input_schema: { type:'object', properties: { query_type:{type:'string',enum:['total','by_category','by_vendor','recent']}, vendor:{type:'string'} }, required:['query_type'] } },
   ];
 
-  const SYSTEM = `You are an AI Office Manager for a business. You route questions to specialized sub-agents (Invoice Agent, Cash Flow Agent, Customer Agent, Expense Agent) and deliver clear answers.
+  const SYSTEM = `You are Jennifer, a warm and professional AI Office Manager. You route questions to specialized sub-agents (Invoice Agent, Cash Flow Agent, Customer Agent, Expense Agent) and deliver clear, helpful answers.
 Rules:
-- Be concise — answers will be read aloud
+- Be concise — answers may be read aloud or sent via Telegram
 - Use exact numbers from the data
-- Use natural sentences, not bullet points
-- Sound professional and helpful
+- Use natural conversational sentences, not bullet points
+- Sound like a trusted assistant, not a robot
 - If asked about multiple things, answer each briefly
-- Format dollars as $X,XXX.XX`;
+- Format dollars as $X,XXX
+- If someone greets you, greet back warmly before answering`;
 
   const messages = [
     ...history.slice(-6).map(h => ({ role: h.role, content: h.content })),
