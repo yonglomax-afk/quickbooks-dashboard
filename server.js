@@ -14,6 +14,67 @@ const SANDBOX_BASE  = 'https://sandbox-quickbooks.api.intuit.com/v3/company';
 let tokens    = {};
 let companyId = '';
 
+// ════════════════════════════════════════════════════════════════════════════
+//  DEBUG TOOLS — Logger + Activity Log
+// ════════════════════════════════════════════════════════════════════════════
+
+const activityLog = [];   // in-memory ring buffer — last 50 entries
+
+function log(level, agent, message, data = {}) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level,      // 'info' | 'error' | 'warn'
+    agent,      // which agent or system component
+    message,    // what happened
+    ...data
+  };
+  // Keep last 50 entries
+  activityLog.push(entry);
+  if (activityLog.length > 50) activityLog.shift();
+  // Print to Railway logs (visible in Railway dashboard)
+  const line = `[${entry.timestamp}] [${level.toUpperCase()}] [${agent}] ${message}` +
+    (data.ms !== undefined ? ` (${data.ms}ms)` : '') +
+    (data.error ? ` — ERROR: ${data.error}` : '') +
+    (data.skill ? ` skill=${data.skill}` : '');
+  if (level === 'error') console.error(line);
+  else console.log(line);
+}
+
+// ── GET /api/debug — System health check (visit this URL to see status)
+app.get('/api/debug', (req, res) => {
+  res.json({
+    status:    'ok',
+    timestamp: new Date().toISOString(),
+    quickbooks: {
+      connected:  !!tokens.access_token,
+      company_id: companyId || 'not connected'
+    },
+    environment: {
+      CLAUDE_API_KEY: !!process.env.CLAUDE_API_KEY  ? '✅ set' : '❌ missing',
+      N8N_API_KEY:    !!process.env.N8N_API_KEY     ? '✅ set' : '❌ missing',
+      QB_CLIENT_ID:   !!process.env.QB_CLIENT_ID    ? '✅ set' : '❌ missing',
+      PORT:           process.env.PORT || 4000
+    },
+    agents: {
+      email_agent:     ['categorize', 'summarize', 'extract_action_items', 'draft_reply'],
+      invoice_agent:   ['overdue', 'paid', 'unpaid', 'by_customer', 'all', 'draft_reminder', 'create_invoice'],
+      cash_flow_agent: ['summary', 'generate_insights'],
+      customer_agent:  ['all', 'by_name', 'highest_balance', 'overdue', 'get_customer_360', 'draft_thank_you'],
+      expense_agent:   ['total', 'by_category', 'by_vendor', 'recent', 'flag_unusual', 'create_expense'],
+      receipt_agent:   ['extract', 'categorize', 'post_to_quickbooks']
+    },
+    recent_activity: activityLog.slice(-10).reverse()
+  });
+});
+
+// ── GET /api/debug/log — Full activity log (last 50 calls)
+app.get('/api/debug/log', (req, res) => {
+  res.json({
+    total_entries: activityLog.length,
+    entries: [...activityLog].reverse()   // newest first
+  });
+});
+
 // ── Home: serve dashboard
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'dashboard.html')));
 
@@ -686,6 +747,7 @@ app.post('/api/chat', async (req, res) => {
   if (!tokens.access_token) return res.json({ answer: 'I am not connected to QuickBooks yet. Please go to the dashboard and click Connect QuickBooks first.', agents: [] });
 
   const { message, history = [] } = req.body;
+  log('info', 'jennifer', 'message received', { preview: (message || '').substring(0, 80) });
 
   const tools = [
     {
@@ -830,6 +892,9 @@ RULES:
 
       for (const tu of toolUses) {
         agentsUsed.push(tu.name);
+        const skill = tu.input.skill || tu.input.query_type || '';
+        const start = Date.now();
+        log('info', tu.name, 'called', { skill, input_keys: Object.keys(tu.input) });
         let result;
         try {
           if      (tu.name === 'email_agent')     result = await emailAgent(tu.input);
@@ -838,8 +903,12 @@ RULES:
           else if (tu.name === 'customer_agent')  result = await customerAgent(tu.input);
           else if (tu.name === 'expense_agent')   result = await expenseAgent(tu.input);
           else if (tu.name === 'receipt_agent')   result = await receiptAgent(tu.input);
-          else result = { error: `Unknown agent: ${tu.name}` };
-        } catch(e) { result = { error: e.message }; }
+          else { result = { error: `Unknown agent: ${tu.name}` }; log('warn', tu.name, 'unknown agent'); }
+          log('info', tu.name, 'completed', { skill, ms: Date.now() - start });
+        } catch(e) {
+          log('error', tu.name, 'failed', { skill, error: e.message, ms: Date.now() - start });
+          result = { error: `${tu.name} (${skill}) failed: ${e.message}` };
+        }
         toolResults.push({ type:'tool_result', tool_use_id:tu.id, content:JSON.stringify(result) });
       }
 
@@ -849,14 +918,16 @@ RULES:
       }, { headers:{'x-api-key':CLAUDE_KEY,'anthropic-version':'2023-06-01','content-type':'application/json'} });
 
       const answer = final.data.content.find(c=>c.type==='text')?.text || 'I could not find that information.';
+      log('info', 'jennifer', 'answered', { agents: agentsUsed });
       return res.json({ answer, agents: agentsUsed });
     }
 
     const answer = firstContent.find(c=>c.type==='text')?.text || 'I could not process that.';
+    log('info', 'jennifer', 'answered (no agents called)', {});
     res.json({ answer, agents: [] });
 
   } catch(e) {
-    console.error('Office Manager error:', e.response?.data || e.message);
+    log('error', 'jennifer', 'request failed', { error: e.response?.data?.error?.message || e.message });
     res.status(500).json({ answer: 'I had trouble getting that information. Please try again.', agents: [] });
   }
 });
