@@ -317,6 +317,110 @@ Rules:
   }
 });
 
+// ── Serve Jennifer page
+app.get('/jennifer', (req, res) => res.sendFile(path.join(__dirname, 'jennifer.html')));
+
+// ── Serve Jennifer PWA manifest
+app.get('/jennifer-manifest.json', (req, res) => {
+  res.json({
+    name: 'Jennifer — AI Office Manager',
+    short_name: 'Jennifer',
+    description: 'Your AI Office Manager — voice-first business assistant',
+    start_url: '/jennifer',
+    display: 'fullscreen',
+    orientation: 'portrait',
+    background_color: '#0f0a0d',
+    theme_color: '#9a3a56',
+    icons: [
+      { src: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌸</text></svg>', sizes: '192x192', type: 'image/svg+xml' }
+    ]
+  });
+});
+
+// ── POST /api/morning-briefing-chat — Jennifer's comprehensive morning briefing
+app.post('/api/morning-briefing-chat', async (req, res) => {
+  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+  if (!CLAUDE_KEY) return res.json({ answer: 'Add CLAUDE_API_KEY to Railway environment variables.', agents: [] });
+  if (!tokens.access_token) return res.json({ answer: 'I am not connected to QuickBooks yet. Please go to the dashboard and connect first.', agents: [] });
+
+  try {
+    const [summary, overdue, cashFlow, expenses, customers] = await Promise.all([
+      invoiceAgent({ query_type: 'all' }),
+      invoiceAgent({ query_type: 'overdue' }),
+      cashFlowAgent({ period: 'this_month' }),
+      expenseAgent({ query_type: 'recent' }),
+      customerAgent({ query_type: 'highest_balance' })
+    ]);
+
+    const today = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+    const CLAUDE_KEY2 = process.env.CLAUDE_API_KEY;
+    const briefingData = { today, summary, overdue, cashFlow, expenses, customers };
+
+    const JENNIFER_SYSTEM = `You are Jennifer, a warm and professional AI Office Manager. You speak conversationally, like a trusted assistant — not like a report. The owner is just waking up and asking for their morning briefing. Be encouraging, highlight what needs attention, and keep it natural. Format numbers clearly. Use a friendly but professional tone.`;
+
+    const briefingPrompt = `Here is the business data for ${today}:\n\n${JSON.stringify(briefingData, null, 2)}\n\nGive the owner a warm, comprehensive morning briefing. Cover: financial health, outstanding invoices, overdue items (flag urgently if any), recent expenses, top customer balances. Keep it conversational — like you're talking to them, not reading a report. End with a motivating note.`;
+
+    const resp = await axios.post('https://api.anthropic.com/v1/messages',
+      { model:'claude-sonnet-4-6', max_tokens:600, system:JENNIFER_SYSTEM, messages:[{ role:'user', content:briefingPrompt }] },
+      { headers:{'x-api-key':CLAUDE_KEY2,'anthropic-version':'2023-06-01','content-type':'application/json'} }
+    );
+    const answer = resp.data.content[0]?.text || 'Good morning! I had trouble loading your data. Please check your QuickBooks connection.';
+    res.json({ answer, agents:['invoice_agent','cash_flow_agent','expense_agent','customer_agent'] });
+  } catch(e) {
+    console.error('Jennifer briefing error:', e.response?.data || e.message);
+    res.status(500).json({ answer: 'Good morning! I had trouble loading your data right now. Please try again.', agents:[] });
+  }
+});
+
+// ── GET /api/morning-briefing — Daily WhatsApp summary (called by n8n at 7am)
+app.get('/api/morning-briefing', async (req, res) => {
+  if (!tokens.access_token) {
+    return res.json({ message: '⚠️ QuickBooks not connected. Visit the dashboard to reconnect.' });
+  }
+  try {
+    const today = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+    const [summary, overdue, cashFlow, expenses] = await Promise.all([
+      invoiceAgent({ query_type: 'all' }),
+      invoiceAgent({ query_type: 'overdue' }),
+      cashFlowAgent({ period: 'this_month' }),
+      expenseAgent({ query_type: 'total' })
+    ]);
+    const fmt = n => `$${Number(n||0).toLocaleString('en-US', { minimumFractionDigits:0, maximumFractionDigits:0 })}`;
+    const lines = [
+      `☀️ *Good Morning — Daily Business Briefing*`,
+      `📅 ${today}`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      ``,
+      `💰 *FINANCIAL SNAPSHOT*`,
+      `• Revenue this month: ${fmt(cashFlow.total_income)}`,
+      `• Expenses this month: ${fmt(cashFlow.total_expenses)}`,
+      `• Net Income: ${fmt(cashFlow.net_income)} ${cashFlow.profitable ? '✅' : '⚠️'}`,
+      ``,
+      `📄 *INVOICES*`,
+      `• Unpaid: ${summary.unpaid||0} invoices (${fmt(summary.total_outstanding)} outstanding)`,
+      `• Paid: ${summary.paid||0} invoices collected`,
+      `• Overdue: ${overdue.count||0} past due ${overdue.count > 0 ? `(${fmt(overdue.total_overdue)}) ⚠️` : '✅'}`,
+      ``,
+      `💸 *EXPENSES*`,
+      `• Total purchases this month: ${expenses.count||0} (${fmt(expenses.total)})`,
+    ];
+    if (overdue.count > 0) {
+      lines.push(``);
+      lines.push(`🚨 *ACTION NEEDED TODAY*`);
+      lines.push(`• Follow up on ${overdue.count} overdue invoice(s):`);
+      (overdue.invoices||[]).slice(0,3).forEach(inv => {
+        lines.push(`  - ${inv.customer}: ${fmt(inv.balance)} (due ${inv.due})`);
+      });
+    }
+    lines.push(``);
+    lines.push(`_Your AI Office Manager_ 🤖`);
+    res.json({ message: lines.join('\n'), date: today, data: { cashFlow, summary, overdue, expenses } });
+  } catch(e) {
+    console.error('Morning briefing error:', e.message);
+    res.json({ message: `☀️ Good Morning!\n\n⚠️ Could not load data: ${e.message}\n\nCheck your QuickBooks connection at the dashboard.` });
+  }
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 //  MED SPA — Routes + AI Office Manager
 // ════════════════════════════════════════════════════════════════════════════
