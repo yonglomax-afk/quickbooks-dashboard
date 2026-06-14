@@ -575,6 +575,110 @@ Respond with ONLY valid JSON:
   }
 }
 
+async function emailAgent({ skill, email_text, email_from, email_subject, context }) {
+  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+  if (!CLAUDE_KEY) return { error: 'CLAUDE_API_KEY not configured' };
+  if (!email_text) return { error: 'email_text is required for email_agent' };
+
+  const header = `From: ${email_from || 'Unknown'}\nSubject: ${email_subject || 'No subject'}\nBody: ${email_text.substring(0, 2500)}`;
+
+  switch (skill) {
+    case 'categorize': {
+      const prompt = `Categorize this business email. Choose ONE category and assess urgency.
+
+${header}
+
+Categories:
+- receipt          → purchase confirmation, order receipt, expense receipt
+- customer_inquiry → question from customer, quote request, information request
+- customer_complaint → complaint, issue, problem, unhappy customer
+- payment_dispute  → "I already paid", billing question, payment disagreement
+- vendor_invoice   → bill or invoice from a supplier or vendor
+- vendor_email     → general communication from a supplier or vendor
+- general          → anything else
+
+Respond with ONLY valid JSON:
+{
+  "category": "one category from the list above",
+  "urgency": "low or medium or high",
+  "who_sent_it": "customer or vendor or unknown",
+  "one_line_summary": "one sentence describing what this email is about",
+  "next_agent": "which agent Jennifer should call next: receipt_agent, invoice_agent, customer_agent, expense_agent, or none"
+}`;
+      const resp = await axios.post('https://api.anthropic.com/v1/messages',
+        { model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{ role: 'user', content: prompt }] },
+        { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
+      );
+      const text = resp.data.content[0]?.text || '{}';
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) return { category: 'general', urgency: 'low', who_sent_it: 'unknown', one_line_summary: 'Could not categorize', next_agent: 'none' };
+      try { return { ...JSON.parse(match[0]), email_from, email_subject }; }
+      catch(_) { return { category: 'general', urgency: 'low', who_sent_it: 'unknown', one_line_summary: 'Parse error', next_agent: 'none' }; }
+    }
+
+    case 'summarize': {
+      const prompt = `Summarize this business email in 2-3 sentences. Be specific — who sent it, what they need, and any key details like amounts or dates.
+
+${header}
+
+Write only the summary.`;
+      const resp = await axios.post('https://api.anthropic.com/v1/messages',
+        { model: 'claude-haiku-4-5-20251001', max_tokens: 200, messages: [{ role: 'user', content: prompt }] },
+        { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
+      );
+      return { summary: resp.data.content[0]?.text || 'Could not summarize.', email_from, email_subject };
+    }
+
+    case 'extract_action_items': {
+      const prompt = `Read this business email and list every action the owner needs to take. Be specific. If none, say so.
+
+${header}
+
+Respond with ONLY valid JSON:
+{
+  "has_action_items": true or false,
+  "action_items": ["specific action 1", "specific action 2"],
+  "deadline": "deadline if mentioned, or null",
+  "priority": "low or medium or high"
+}`;
+      const resp = await axios.post('https://api.anthropic.com/v1/messages',
+        { model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{ role: 'user', content: prompt }] },
+        { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
+      );
+      const text = resp.data.content[0]?.text || '{}';
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) return { has_action_items: false, action_items: [], deadline: null, priority: 'low' };
+      try { return JSON.parse(match[0]); }
+      catch(_) { return { has_action_items: false, action_items: [], deadline: null, priority: 'low' }; }
+    }
+
+    case 'draft_reply': {
+      const prompt = `Write a professional, friendly reply to this business email. 3-5 sentences max. No placeholders like [Your Name] or [Company Name].
+
+Original email:
+${header}
+
+${context ? `Owner's instruction: ${context}` : ''}
+
+Write only the reply body.`;
+      const resp = await axios.post('https://api.anthropic.com/v1/messages',
+        { model: 'claude-haiku-4-5-20251001', max_tokens: 400, messages: [{ role: 'user', content: prompt }] },
+        { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
+      );
+      return {
+        action: 'draft_reply',
+        reply_to: email_from || 'Unknown',
+        subject: `Re: ${email_subject || ''}`,
+        draft: resp.data.content[0]?.text || 'Could not draft reply.',
+        status: 'Draft ready — review and send'
+      };
+    }
+
+    default:
+      return { error: `Unknown email_agent skill: "${skill}". Available: categorize, summarize, extract_action_items, draft_reply` };
+  }
+}
+
 // ── POST /api/chat — Master AI Office Manager (orchestrates sub-agents)
 app.post('/api/chat', async (req, res) => {
   const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
@@ -584,6 +688,21 @@ app.post('/api/chat', async (req, res) => {
   const { message, history = [] } = req.body;
 
   const tools = [
+    {
+      name: 'email_agent',
+      description: 'FIRST RESPONDER — always call this first when the owner shares any email content. Reads every incoming email and decides what to do next. Skills: categorize (determines email type and tells Jennifer which specialist to call next), summarize (2-3 sentence summary), extract_action_items (what the owner needs to do), draft_reply (write a professional response). After categorize, follow the next_agent field to route to the right specialist.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          skill:         { type: 'string', enum: ['categorize', 'summarize', 'extract_action_items', 'draft_reply'], description: 'Always start with categorize for any new email' },
+          email_text:    { type: 'string', description: 'Full email body text — required' },
+          email_from:    { type: 'string', description: 'Sender email address' },
+          email_subject: { type: 'string', description: 'Email subject line' },
+          context:       { type: 'string', description: 'Owner instruction for draft_reply — e.g. "apologize" or "ask for payment date"' }
+        },
+        required: ['skill', 'email_text']
+      }
+    },
     {
       name: 'invoice_agent',
       description: 'Manages invoices — reads data AND takes actions. Use for invoice questions (overdue, paid, unpaid, by customer) AND for drafting payment reminder emails (draft_reminder) or creating new invoices in QuickBooks (create_invoice).',
@@ -660,24 +779,40 @@ app.post('/api/chat', async (req, res) => {
     },
   ];
 
-  const SYSTEM = `You are Jennifer, a warm and professional AI Office Manager with both knowledge and action skills. You coordinate specialized sub-agents and can take real business actions on behalf of the owner.
+  const SYSTEM = `You are Jennifer, a warm and professional AI Office Manager. You are the front door — every message comes to you first. You coordinate specialized sub-agents and take real business actions on behalf of the owner.
 
-Your capabilities:
-- INVOICE AGENT: Check overdue/paid/unpaid invoices, draft payment reminder emails, create new invoices
-- CASH FLOW AGENT: Revenue, expenses, net income, and AI financial health insights
-- CUSTOMER AGENT: Customer balances, full customer profile (360 view), draft thank-you notes
-- EXPENSE AGENT: Spending analysis, flag unusual/duplicate expenses, create expense entries in QuickBooks
-- RECEIPT AGENT: Process receipts end-to-end — extract data from email text, categorize for QuickBooks, then post the expense (Jennifer posts it herself)
+YOUR AGENTS AND WHEN TO CALL THEM:
 
-Rules:
+EMAIL AGENT (call first for any email content):
+  • categorize   → always your first call when owner shares email text
+  • summarize    → get a clear 2-3 sentence summary
+  • extract_action_items → find what needs to be done
+  • draft_reply  → write a professional response
+
+ROUTING RULES after email_agent.categorize:
+  • category = receipt or vendor_invoice  → call receipt_agent (extract → categorize → post_to_quickbooks)
+  • category = payment_dispute            → call invoice_agent (find the invoice, get details)
+  • category = customer_inquiry           → call customer_agent + email_agent.draft_reply
+  • category = customer_complaint         → call email_agent.draft_reply (urgent tone) + customer_agent
+  • category = vendor_email               → call email_agent.summarize + email_agent.extract_action_items
+  • category = general                    → call email_agent.summarize
+
+SPECIALIST AGENTS (call after email_agent routes you there):
+  • invoice_agent    → invoices: overdue, paid, unpaid, draft_reminder, create_invoice
+  • cash_flow_agent  → P&L, revenue, expenses, generate_insights
+  • customer_agent   → customer data, get_customer_360, draft_thank_you
+  • expense_agent    → spending, flag_unusual, create_expense
+  • receipt_agent    → extract, categorize, post_to_quickbooks
+
+RULES:
 - Be concise — answers may be read aloud
-- Use exact numbers from the data
-- Speak naturally, like a trusted assistant, not a robot
+- Use exact numbers from data
+- Speak naturally, like a trusted assistant
 - Format dollars as $X,XXX
-- When you draft emails or notes, present them clearly labeled so the owner can review before sending
-- For action results (draft created, invoice created, expense posted), confirm what was done with a brief summary
-- If a skill returns an error, explain it clearly and suggest what the owner should check
-- Greet back warmly if greeted`;
+- For drafts (emails, notes), present them clearly so the owner can review before sending
+- For completed actions (expense posted, invoice created), confirm briefly what was done
+- If an agent returns an error, explain clearly and suggest what to check
+- Greet warmly if greeted`;
 
   const messages = [
     ...history.slice(-6).map(h => ({ role: h.role, content: h.content })),
@@ -697,7 +832,8 @@ Rules:
         agentsUsed.push(tu.name);
         let result;
         try {
-          if      (tu.name === 'invoice_agent')   result = await invoiceAgent(tu.input);
+          if      (tu.name === 'email_agent')     result = await emailAgent(tu.input);
+          else if (tu.name === 'invoice_agent')   result = await invoiceAgent(tu.input);
           else if (tu.name === 'cash_flow_agent') result = await cashFlowAgent(tu.input);
           else if (tu.name === 'customer_agent')  result = await customerAgent(tu.input);
           else if (tu.name === 'expense_agent')   result = await expenseAgent(tu.input);
