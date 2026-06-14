@@ -460,6 +460,121 @@ async function expenseAgent({ query_type, vendor, amount, date, category, memo }
   }
 }
 
+async function receiptAgent({ skill, email_text, email_from, email_subject, vendor, amount, date, description, category }) {
+  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+  if (!CLAUDE_KEY) return { error: 'CLAUDE_API_KEY not configured' };
+
+  switch (skill) {
+    case 'extract': {
+      if (!email_text) return { error: 'email_text is required for the extract skill' };
+      const prompt = `You are a receipt extraction specialist. Analyze this email and determine if it is a business expense receipt or purchase confirmation.
+
+Email From: ${(email_from || '').substring(0, 200)}
+Email Subject: ${(email_subject || '').substring(0, 200)}
+Email Text: ${email_text.substring(0, 3000)}
+
+If this is a receipt, invoice, or order confirmation — extract the data.
+If NOT a receipt (newsletter, marketing, personal email) — set is_receipt to false.
+
+Respond with ONLY valid JSON, no explanation:
+{
+  "is_receipt": true or false,
+  "vendor": "company or store name, or null",
+  "amount": total as a number, or null,
+  "date": "YYYY-MM-DD or null",
+  "description": "brief description of purchase, or null",
+  "items": ["item1", "item2"] or []
+}`;
+      const resp = await axios.post('https://api.anthropic.com/v1/messages',
+        { model: 'claude-haiku-4-5-20251001', max_tokens: 400, messages: [{ role: 'user', content: prompt }] },
+        { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
+      );
+      const text = resp.data.content[0]?.text || '{}';
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) return { is_receipt: false, error: 'Could not parse extraction response' };
+      try { return JSON.parse(match[0]); } catch(_) { return { is_receipt: false, error: 'Invalid JSON in extraction response' }; }
+    }
+
+    case 'categorize': {
+      if (!vendor && !description) return { error: 'vendor or description is required to categorize' };
+      const prompt = `You are Jennifer, an AI Office Manager. Categorize this business expense for QuickBooks.
+
+Vendor: ${vendor || 'Unknown'}
+Amount: $${amount || 0}
+Date: ${date || 'Unknown'}
+Description: ${description || 'No description'}
+
+Choose the best category from: Materials, Supplies, Food, Travel, Utilities, Office, Equipment, Software, Other
+
+QuickBooks account for each category:
+- Materials → "Cost of Goods Sold"
+- Supplies → "Office Expenses"
+- Food → "Meals and Entertainment"
+- Travel → "Travel"
+- Utilities → "Utilities"
+- Office → "Office Expenses"
+- Equipment → "Equipment Rental"
+- Software → "Office Expenses"
+- Other → "Other Business Expenses"
+
+Respond with ONLY valid JSON:
+{
+  "category": "chosen category",
+  "account": "QuickBooks account name",
+  "confidence": number 0-100,
+  "notes": "one sentence explanation"
+}`;
+      const resp = await axios.post('https://api.anthropic.com/v1/messages',
+        { model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{ role: 'user', content: prompt }] },
+        { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
+      );
+      const text = resp.data.content[0]?.text || '{}';
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) return { category: 'Other', account: 'Other Business Expenses', confidence: 0, notes: 'Could not parse categorization' };
+      try {
+        const result = JSON.parse(match[0]);
+        return { ...result, vendor, amount, date, description };
+      } catch(_) {
+        return { category: 'Other', account: 'Other Business Expenses', confidence: 0, vendor, amount, date, description };
+      }
+    }
+
+    case 'post_to_quickbooks': {
+      if (!tokens.access_token) return { error: 'QuickBooks is not connected. Go to the dashboard and click Connect.' };
+      if (!vendor) return { error: 'vendor is required to post expense to QuickBooks' };
+      if (!amount || isNaN(parseFloat(amount))) return { error: 'A valid amount is required to post expense to QuickBooks' };
+      const accountName = CATEGORY_ACCOUNTS[category] || 'Other Business Expenses';
+      const body = {
+        PaymentType: 'Cash',
+        AccountRef: { name: 'Checking' },
+        TxnDate: date || new Date().toISOString().split('T')[0],
+        EntityRef: { name: vendor, type: 'Vendor' },
+        Line: [{
+          Amount: parseFloat(amount),
+          DetailType: 'AccountBasedExpenseLineDetail',
+          Description: description || `${category || 'Expense'}: ${vendor}`,
+          AccountBasedExpenseLineDetail: { AccountRef: { name: accountName }, BillableStatus: 'NotBillable' }
+        }]
+      };
+      const result = await qbPost('/purchase', body);
+      return {
+        success: true,
+        purchase_id: result.Purchase?.Id,
+        doc_number: result.Purchase?.DocNumber,
+        vendor,
+        amount: parseFloat(amount),
+        category: category || 'Other',
+        account: accountName,
+        date: date || new Date().toISOString().split('T')[0],
+        status: 'Posted to QuickBooks by Jennifer'
+      };
+    }
+
+    default:
+      return { error: `Unknown receipt_agent skill: "${skill}". Available skills: extract, categorize, post_to_quickbooks` };
+  }
+}
+
 // ── POST /api/chat — Master AI Office Manager (orchestrates sub-agents)
 app.post('/api/chat', async (req, res) => {
   const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
@@ -524,6 +639,25 @@ app.post('/api/chat', async (req, res) => {
         required: ['query_type']
       }
     },
+    {
+      name: 'receipt_agent',
+      description: 'Processes expense receipts end-to-end. Use when the owner shares receipt text or email content. Three skills: extract (read raw email/text and pull out vendor, amount, date), categorize (assign QuickBooks category and account with confidence score), post_to_quickbooks (Jennifer posts the expense directly to QuickBooks). Always call extract first, then categorize, then post_to_quickbooks.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          skill:         { type: 'string', enum: ['extract', 'categorize', 'post_to_quickbooks'], description: 'Which skill to run' },
+          email_text:    { type: 'string', description: 'Full email or receipt text — required for extract' },
+          email_from:    { type: 'string', description: 'Sender email address — for extract' },
+          email_subject: { type: 'string', description: 'Email subject line — for extract' },
+          vendor:        { type: 'string', description: 'Vendor name — for categorize and post_to_quickbooks' },
+          amount:        { type: 'number', description: 'Total receipt amount — for categorize and post_to_quickbooks' },
+          date:          { type: 'string', description: 'Receipt date YYYY-MM-DD — for categorize and post_to_quickbooks' },
+          description:   { type: 'string', description: 'What was purchased — for categorize and post_to_quickbooks' },
+          category:      { type: 'string', description: 'Category from categorize result — required for post_to_quickbooks' }
+        },
+        required: ['skill']
+      }
+    },
   ];
 
   const SYSTEM = `You are Jennifer, a warm and professional AI Office Manager with both knowledge and action skills. You coordinate specialized sub-agents and can take real business actions on behalf of the owner.
@@ -533,6 +667,7 @@ Your capabilities:
 - CASH FLOW AGENT: Revenue, expenses, net income, and AI financial health insights
 - CUSTOMER AGENT: Customer balances, full customer profile (360 view), draft thank-you notes
 - EXPENSE AGENT: Spending analysis, flag unusual/duplicate expenses, create expense entries in QuickBooks
+- RECEIPT AGENT: Process receipts end-to-end — extract data from email text, categorize for QuickBooks, then post the expense (Jennifer posts it herself)
 
 Rules:
 - Be concise — answers may be read aloud
@@ -566,6 +701,7 @@ Rules:
           else if (tu.name === 'cash_flow_agent') result = await cashFlowAgent(tu.input);
           else if (tu.name === 'customer_agent')  result = await customerAgent(tu.input);
           else if (tu.name === 'expense_agent')   result = await expenseAgent(tu.input);
+          else if (tu.name === 'receipt_agent')   result = await receiptAgent(tu.input);
           else result = { error: `Unknown agent: ${tu.name}` };
         } catch(e) { result = { error: e.message }; }
         toolResults.push({ type:'tool_result', tool_use_id:tu.id, content:JSON.stringify(result) });
@@ -920,96 +1056,27 @@ Rules:
 //  RECEIPT EMAIL AUTOMATION — Extract + Approve + Post to QuickBooks
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── POST /api/extract-receipt — Claude reads email and extracts receipt data
+// ── POST /api/extract-receipt — thin wrapper, delegates to receiptAgent (single source of truth)
 app.post('/api/extract-receipt', requireApiKey, async (req, res) => {
-  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
-  if (!CLAUDE_KEY) return res.status(500).json({ error: 'CLAUDE_API_KEY not set' });
-
   const { email_body, email_subject, email_from } = req.body;
   if (!email_body) return res.status(400).json({ error: 'email_body required' });
-
-  const prompt = `You are a receipt extraction specialist. Analyze this email and determine if it is a business expense receipt or purchase confirmation.
-
-Email From: ${(email_from || '').substring(0, 200)}
-Email Subject: ${(email_subject || '').substring(0, 200)}
-Email Body: ${(email_body || '').substring(0, 3000)}
-
-If this is a receipt, invoice, or order confirmation for a business purchase — extract the data.
-If it is NOT a receipt (newsletter, personal email, marketing, social notification) — set is_receipt to false.
-
-Respond with ONLY a valid JSON object, no explanation:
-{
-  "is_receipt": true or false,
-  "vendor": "company or store name, or null",
-  "amount": total amount as a number, or null,
-  "date": "YYYY-MM-DD format, or null",
-  "description": "brief description of what was purchased, or null",
-  "items": ["item1", "item2"] or []
-}`;
-
   try {
-    const resp = await axios.post('https://api.anthropic.com/v1/messages',
-      { model: 'claude-haiku-4-5-20251001', max_tokens: 400, messages: [{ role: 'user', content: prompt }] },
-      { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
-    );
-    const text = resp.data.content[0]?.text || '{}';
-    const match = text.match(/\{[\s\S]*\}/);
-    const receipt = match ? JSON.parse(match[0]) : { is_receipt: false };
+    const receipt = await receiptAgent({ skill: 'extract', email_text: email_body, email_from, email_subject });
     res.json({ success: true, receipt });
   } catch (e) {
-    console.error('Extract receipt error:', e.response?.data || e.message);
+    console.error('Extract receipt error:', e.message);
     res.status(500).json({ success: false, error: e.message, receipt: { is_receipt: false } });
   }
 });
 
-// ── POST /api/approve-expense — Jennifer reviews receipt and decides category + QB account
+// ── POST /api/approve-expense — thin wrapper, delegates to receiptAgent (single source of truth)
 app.post('/api/approve-expense', requireApiKey, async (req, res) => {
-  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
-  if (!CLAUDE_KEY) return res.status(500).json({ error: 'CLAUDE_API_KEY not set' });
-
-  const { vendor, amount, date, description, items = [] } = req.body;
-
-  const prompt = `You are Jennifer, an AI Office Manager. Review this business expense receipt and categorize it for QuickBooks.
-
-Vendor: ${vendor || 'Unknown'}
-Amount: $${amount || 0}
-Date: ${date || 'Unknown'}
-Description: ${description || 'No description'}
-Items purchased: ${items.length > 0 ? items.join(', ') : 'Not listed'}
-
-Choose the best category from this list: Materials, Supplies, Food, Travel, Utilities, Office, Equipment, Software, Other
-
-QuickBooks account for each category:
-- Materials → "Cost of Goods Sold"
-- Supplies → "Office Expenses"
-- Food → "Meals and Entertainment"
-- Travel → "Travel"
-- Utilities → "Utilities"
-- Office → "Office Expenses"
-- Equipment → "Equipment Rental"
-- Software → "Office Expenses"
-- Other → "Other Business Expenses"
-
-Respond with ONLY a valid JSON object:
-{
-  "approved": true,
-  "category": "chosen category",
-  "account": "QuickBooks account name",
-  "confidence": number 0-100,
-  "notes": "one sentence explanation"
-}`;
-
+  const { vendor, amount, date, description } = req.body;
   try {
-    const resp = await axios.post('https://api.anthropic.com/v1/messages',
-      { model: 'claude-haiku-4-5-20251001', max_tokens: 300, messages: [{ role: 'user', content: prompt }] },
-      { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } }
-    );
-    const text = resp.data.content[0]?.text || '{}';
-    const match = text.match(/\{[\s\S]*\}/);
-    const decision = match ? JSON.parse(match[0]) : { approved: false, category: 'Other', confidence: 0, notes: 'Could not parse response' };
-    res.json({ ...decision, vendor, amount, date, description });
+    const decision = await receiptAgent({ skill: 'categorize', vendor, amount, date, description });
+    res.json({ approved: true, ...decision });
   } catch (e) {
-    console.error('Approve expense error:', e.response?.data || e.message);
+    console.error('Approve expense error:', e.message);
     res.status(500).json({ approved: false, error: e.message });
   }
 });
