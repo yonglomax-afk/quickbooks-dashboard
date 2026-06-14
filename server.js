@@ -318,6 +318,40 @@ Rules:
   }
 });
 
+// ── POST /api/manufacturing-chat — Jennifer for the manufacturing dashboard
+app.post('/api/manufacturing-chat', async (req, res) => {
+  const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+  if (!CLAUDE_KEY) return res.json({ answer: 'Add CLAUDE_API_KEY to Railway environment variables.' });
+
+  const { message, context, history = [] } = req.body;
+  const SYSTEM = `You are Jennifer, an AI Office Manager for Empire Auto Manufacturing. You answer questions about daily production, inventory, and shipments using the live data provided.
+Rules:
+- Be concise and direct — factory managers are busy
+- Use exact numbers from the data
+- Flag behind-schedule items urgently (use words like "BEHIND" or "needs attention")
+- Speak naturally, not like a report
+- Format percentages clearly`;
+
+  const contextBlock = `Live manufacturing data for ${context?.date || 'today'}:\n${JSON.stringify(context, null, 2)}`;
+  const messages = [
+    { role:'user', content: contextBlock },
+    { role:'assistant', content: "I have today's live production data. Ready for your questions." },
+    ...history.slice(-4).map(h => ({ role:h.role, content:h.content })),
+    { role:'user', content: message }
+  ];
+
+  try {
+    const resp = await axios.post('https://api.anthropic.com/v1/messages',
+      { model:'claude-sonnet-4-6', max_tokens:512, system:SYSTEM, messages },
+      { headers:{'x-api-key':CLAUDE_KEY,'anthropic-version':'2023-06-01','content-type':'application/json'} }
+    );
+    res.json({ answer: resp.data.content[0]?.text || 'I could not process that.' });
+  } catch(e) {
+    console.error('Manufacturing chat error:', e.response?.data || e.message);
+    res.status(500).json({ answer: 'I had trouble getting that. Please try again.' });
+  }
+});
+
 // ── Serve Jennifer page
 app.get('/jennifer', (req, res) => res.sendFile(path.join(__dirname, 'jennifer.html')));
 
