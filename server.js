@@ -43,11 +43,19 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-// ── Helper: authenticated QB request
+// ── Helper: authenticated QB GET
 async function qbGet(path) {
   const sep = path.includes('?') ? '&' : '?';
   const { data } = await axios.get(`${SANDBOX_BASE}/${companyId}${path}${sep}minorversion=65`, {
     headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: 'application/json' }
+  });
+  return data;
+}
+
+// ── Helper: authenticated QB POST
+async function qbPost(path, body) {
+  const { data } = await axios.post(`${SANDBOX_BASE}/${companyId}${path}?minorversion=65`, body, {
+    headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: 'application/json', 'Content-Type': 'application/json' }
   });
   return data;
 }
@@ -178,31 +186,101 @@ app.get('/office-manager', (req, res) => res.sendFile(path.join(__dirname, 'offi
 //  AI OFFICE MANAGER — Sub-Agent Tool Handlers
 // ════════════════════════════════════════════════════════════════════════════
 
-async function invoiceAgent({ query_type, customer_name }) {
+async function invoiceAgent({ query_type, customer_name, amount, due_date, description }) {
   const data = await qbGet('/query?query=' + encodeURIComponent('SELECT * FROM Invoice MAXRESULTS 200'));
-  let inv = data.QueryResponse?.Invoice || [];
+  const inv = data.QueryResponse?.Invoice || [];
   const today = new Date();
-  const fmt = n => `$${Number(n).toFixed(2)}`;
-  const row = i => ({ number: i.DocNumber, customer: i.CustomerRef?.name, amount: i.TotalAmt, balance: i.Balance, date: i.TxnDate, due: i.DueDate });
+  const fmt = n => `$${Number(n || 0).toFixed(2)}`;
+  const row = i => ({ number: i.DocNumber, customer: i.CustomerRef?.name || 'Unknown', amount: i.TotalAmt || 0, balance: i.Balance || 0, date: i.TxnDate, due: i.DueDate });
+
   switch (query_type) {
-    case 'overdue':
-      inv = inv.filter(i => i.Balance > 0 && i.DueDate && new Date(i.DueDate) < today);
-      return { count: inv.length, total_overdue: inv.reduce((s,i)=>s+i.Balance,0), invoices: inv.slice(0,10).map(row) };
-    case 'paid':
-      inv = inv.filter(i => i.Balance <= 0);
-      return { count: inv.length, total_paid: inv.reduce((s,i)=>s+i.TotalAmt,0), invoices: inv.slice(0,10).map(row) };
-    case 'unpaid':
-      inv = inv.filter(i => i.Balance > 0);
-      return { count: inv.length, total_unpaid: inv.reduce((s,i)=>s+i.Balance,0), invoices: inv.slice(0,10).map(row) };
-    case 'by_customer':
-      if (customer_name) inv = inv.filter(i => i.CustomerRef?.name?.toLowerCase().includes(customer_name.toLowerCase()));
-      return { count: inv.length, invoices: inv.map(row) };
+    case 'overdue': {
+      const overdue = inv.filter(i => (i.Balance || 0) > 0 && i.DueDate && new Date(i.DueDate) < today);
+      return { count: overdue.length, total_overdue: overdue.reduce((s,i)=>s+(i.Balance||0),0), invoices: overdue.slice(0,10).map(row) };
+    }
+    case 'paid': {
+      const paid = inv.filter(i => (i.Balance || 0) <= 0);
+      return { count: paid.length, total_paid: paid.reduce((s,i)=>s+(i.TotalAmt||0),0), invoices: paid.slice(0,10).map(row) };
+    }
+    case 'unpaid': {
+      const unpaid = inv.filter(i => (i.Balance || 0) > 0);
+      return { count: unpaid.length, total_unpaid: unpaid.reduce((s,i)=>s+(i.Balance||0),0), invoices: unpaid.slice(0,10).map(row) };
+    }
+    case 'by_customer': {
+      const filtered = customer_name
+        ? inv.filter(i => (i.CustomerRef?.name || '').toLowerCase().includes(customer_name.toLowerCase()))
+        : inv;
+      return { count: filtered.length, invoices: filtered.map(row) };
+    }
+    case 'draft_reminder': {
+      let overdue = inv.filter(i => (i.Balance || 0) > 0 && i.DueDate && new Date(i.DueDate) < today);
+      if (customer_name) overdue = overdue.filter(i => (i.CustomerRef?.name || '').toLowerCase().includes(customer_name.toLowerCase()));
+      if (overdue.length === 0) return { message: `No overdue invoices found${customer_name ? ' for ' + customer_name : ''}` };
+
+      let custEmail = '[no email on file]';
+      try {
+        const safe = (customer_name || '').replace(/'/g, "\\'");
+        const custData = await qbGet('/query?query=' + encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName LIKE '%${safe}%' MAXRESULTS 1`));
+        custEmail = custData.QueryResponse?.Customer?.[0]?.PrimaryEmailAddr?.Address || '[no email on file]';
+      } catch(_) {}
+
+      const targetCustomer = overdue[0].CustomerRef?.name || customer_name || 'Valued Customer';
+      const totalOwed = overdue.reduce((s,i)=>s+(i.Balance||0),0);
+      const invoiceList = overdue.slice(0,5).map(i=>`Invoice #${i.DocNumber}: ${fmt(i.Balance)} (due ${i.DueDate})`).join('\n');
+
+      const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+      if (!CLAUDE_KEY) return { error: 'CLAUDE_API_KEY not configured' };
+
+      const composeResp = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: 'claude-haiku-4-5-20251001', max_tokens: 350,
+        messages: [{ role: 'user', content: `Write a professional, friendly payment reminder email. 3-4 sentences max. No placeholders like [Your Name] or [Company Name].
+
+Customer: ${targetCustomer}
+Overdue invoices:\n${invoiceList}
+Total owed: ${fmt(totalOwed)}
+
+Write only the email body.` }]
+      }, { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
+
+      return {
+        action: 'draft_reminder',
+        customer: targetCustomer,
+        email_to: custEmail,
+        total_overdue: totalOwed,
+        overdue_invoices: overdue.slice(0,5).map(row),
+        draft_email: composeResp.data.content[0]?.text || 'Could not compose email.',
+        status: 'Draft ready — review and send'
+      };
+    }
+    case 'create_invoice': {
+      if (!customer_name) return { error: 'customer_name is required to create an invoice' };
+      if (!amount || isNaN(parseFloat(amount))) return { error: 'A valid amount is required to create an invoice' };
+      const safe = customer_name.replace(/'/g, "\\'");
+      const custData = await qbGet('/query?query=' + encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName LIKE '%${safe}%' MAXRESULTS 1`));
+      const cust = custData.QueryResponse?.Customer?.[0];
+      if (!cust) return { error: `Customer "${customer_name}" not found in QuickBooks. Please check the name.` };
+      const txnDate = new Date().toISOString().split('T')[0];
+      const dueDate = due_date || (() => { const d = new Date(); d.setDate(d.getDate()+30); return d.toISOString().split('T')[0]; })();
+      const body = {
+        CustomerRef: { value: cust.Id },
+        TxnDate: txnDate,
+        DueDate: dueDate,
+        Line: [{
+          Amount: parseFloat(amount),
+          DetailType: 'SalesItemLineDetail',
+          Description: description || 'Services rendered',
+          SalesItemLineDetail: { ItemRef: { value: '1', name: 'Services' } }
+        }]
+      };
+      const result = await qbPost('/invoice', body);
+      return { success: true, invoice_id: result.Invoice?.Id, invoice_number: result.Invoice?.DocNumber, customer: cust.DisplayName, amount: parseFloat(amount), due_date: dueDate, status: 'Invoice created in QuickBooks' };
+    }
     default:
-      return { total: inv.length, paid: inv.filter(i=>i.Balance<=0).length, unpaid: inv.filter(i=>i.Balance>0).length, total_invoiced: inv.reduce((s,i)=>s+i.TotalAmt,0), total_outstanding: inv.filter(i=>i.Balance>0).reduce((s,i)=>s+i.Balance,0) };
+      return { total: inv.length, paid: inv.filter(i=>(i.Balance||0)<=0).length, unpaid: inv.filter(i=>(i.Balance||0)>0).length, total_invoiced: inv.reduce((s,i)=>s+(i.TotalAmt||0),0), total_outstanding: inv.filter(i=>(i.Balance||0)>0).reduce((s,i)=>s+(i.Balance||0),0) };
   }
 }
 
-async function cashFlowAgent({ period }) {
+async function cashFlowAgent({ period, query_type }) {
   const { data } = await axios.get(`${SANDBOX_BASE}/${companyId}/reports/ProfitAndLoss?minorversion=65`, { headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: 'application/json' } });
   const rows = data?.Rows?.Row || [];
   const find = (group) => rows.find(r => r.group === group || r.Header?.ColData?.[0]?.value === group);
@@ -210,42 +288,173 @@ async function cashFlowAgent({ period }) {
   const income   = find('Income');
   const expenses = find('Expenses');
   const net      = rows.find(r => r.Summary?.ColData?.[0]?.value === 'Net Income');
-  return { period, total_income: val(income), total_expenses: val(expenses), net_income: val(net), profitable: val(net) > 0 };
+  const summary  = { period, total_income: val(income), total_expenses: val(expenses), net_income: val(net), profitable: val(net) > 0 };
+
+  if (query_type === 'generate_insights') {
+    const margin       = summary.total_income > 0 ? ((summary.net_income / summary.total_income) * 100).toFixed(1) : '0';
+    const expenseRatio = summary.total_income > 0 ? ((summary.total_expenses / summary.total_income) * 100).toFixed(1) : '0';
+    const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+    if (!CLAUDE_KEY) return { ...summary, insights: 'CLAUDE_API_KEY not configured' };
+    const insightResp = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-haiku-4-5-20251001', max_tokens: 400,
+      messages: [{ role: 'user', content: `You are a financial advisor. Analyze this business P&L and give exactly 3 specific, actionable insights. Be direct. No generic advice.
+
+Period: ${period}
+Revenue: $${summary.total_income.toFixed(2)}
+Expenses: $${summary.total_expenses.toFixed(2)}
+Net Income: $${summary.net_income.toFixed(2)}
+Net Margin: ${margin}%
+Expense Ratio: ${expenseRatio}%
+
+Give 3 numbered insights. Each 1-2 sentences. Focus on what the owner should do or watch.` }]
+    }, { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
+    return { ...summary, margin_pct: parseFloat(margin), expense_ratio_pct: parseFloat(expenseRatio), insights: insightResp.data.content[0]?.text || 'Could not generate insights.' };
+  }
+
+  return summary;
 }
 
 async function customerAgent({ query_type, customer_name }) {
   const data = await qbGet('/query?query=' + encodeURIComponent('SELECT * FROM Customer MAXRESULTS 100'));
-  let custs = data.QueryResponse?.Customer || [];
-  const row = c => ({ name: c.DisplayName, balance: c.Balance||0, email: c.PrimaryEmailAddr?.Address||'', phone: c.PrimaryPhone?.FreeFormNumber||'', active: c.Active });
+  const custs = data.QueryResponse?.Customer || [];
+  const row = c => ({ name: c.DisplayName || 'Unknown', balance: c.Balance||0, email: c.PrimaryEmailAddr?.Address||'', phone: c.PrimaryPhone?.FreeFormNumber||'', active: c.Active });
+
   switch (query_type) {
-    case 'by_name':
-      if (customer_name) custs = custs.filter(c => c.DisplayName?.toLowerCase().includes(customer_name.toLowerCase()));
-      return { customers: custs.map(row) };
+    case 'by_name': {
+      const filtered = customer_name
+        ? custs.filter(c => (c.DisplayName || '').toLowerCase().includes(customer_name.toLowerCase()))
+        : custs;
+      return { customers: filtered.map(row) };
+    }
     case 'highest_balance':
-      return { customers: custs.sort((a,b)=>(b.Balance||0)-(a.Balance||0)).slice(0,5).map(row) };
-    case 'overdue':
-      custs = custs.filter(c => (c.Balance||0) > 0);
-      return { count: custs.length, total_owed: custs.reduce((s,c)=>s+(c.Balance||0),0), customers: custs.map(row) };
+      return { customers: [...custs].sort((a,b)=>(b.Balance||0)-(a.Balance||0)).slice(0,5).map(row) };
+    case 'overdue': {
+      const owing = custs.filter(c => (c.Balance||0) > 0);
+      return { count: owing.length, total_owed: owing.reduce((s,c)=>s+(c.Balance||0),0), customers: owing.map(row) };
+    }
+    case 'get_customer_360': {
+      if (!customer_name) return { error: 'customer_name is required for 360 view' };
+      const cust = custs.find(c => (c.DisplayName || '').toLowerCase().includes(customer_name.toLowerCase()));
+      if (!cust) return { error: `Customer "${customer_name}" not found in QuickBooks` };
+      const invData = await qbGet('/query?query=' + encodeURIComponent(`SELECT * FROM Invoice WHERE CustomerRef = '${cust.Id}' MAXRESULTS 50`));
+      const invoices = invData.QueryResponse?.Invoice || [];
+      const paid    = invoices.filter(i => (i.Balance||0) <= 0);
+      const unpaid  = invoices.filter(i => (i.Balance||0) > 0);
+      const overdue = unpaid.filter(i => i.DueDate && new Date(i.DueDate) < new Date());
+      const totalValue = invoices.reduce((s,i)=>s+(i.TotalAmt||0),0);
+      const avgInvoice = invoices.length > 0 ? totalValue/invoices.length : 0;
+      const risk = overdue.length >= 3 ? 'High' : overdue.length > 0 ? 'Medium' : 'Low';
+      return {
+        customer: row(cust),
+        total_invoices: invoices.length,
+        paid_invoices: paid.length,
+        unpaid_invoices: unpaid.length,
+        overdue_invoices: overdue.length,
+        total_business_value: totalValue,
+        avg_invoice_amount: avgInvoice,
+        current_balance: cust.Balance||0,
+        payment_risk: risk,
+        recent_invoices: [...invoices].sort((a,b)=>new Date(b.TxnDate)-new Date(a.TxnDate)).slice(0,5).map(i=>({ number:i.DocNumber, amount:i.TotalAmt||0, balance:i.Balance||0, date:i.TxnDate, due:i.DueDate }))
+      };
+    }
+    case 'draft_thank_you': {
+      if (!customer_name) return { error: 'customer_name is required to draft a thank-you' };
+      const cust = custs.find(c => (c.DisplayName || '').toLowerCase().includes(customer_name.toLowerCase()));
+      if (!cust) return { error: `Customer "${customer_name}" not found in QuickBooks` };
+      const CLAUDE_KEY = process.env.CLAUDE_API_KEY;
+      if (!CLAUDE_KEY) return { error: 'CLAUDE_API_KEY not configured' };
+      const resp = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: 'claude-haiku-4-5-20251001', max_tokens: 250,
+        messages: [{ role: 'user', content: `Write a short, sincere business thank-you message to a valued customer. 2-3 sentences. Warm but professional. No placeholders like [Your Name] or [Company].
+
+Customer name: ${cust.DisplayName}
+Total business with us: $${(cust.Balance||0).toFixed(2)} current balance
+
+Write only the message body.` }]
+      }, { headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' } });
+      return {
+        action: 'draft_thank_you',
+        customer: cust.DisplayName,
+        email_to: cust.PrimaryEmailAddr?.Address || '[no email on file]',
+        draft_message: resp.data.content[0]?.text || 'Could not compose message.',
+        status: 'Draft ready — review and send'
+      };
+    }
     default:
       return { total: custs.length, active: custs.filter(c=>c.Active).length, total_balance: custs.reduce((s,c)=>s+(c.Balance||0),0) };
   }
 }
 
-async function expenseAgent({ query_type, vendor }) {
+async function expenseAgent({ query_type, vendor, amount, date, category, memo }) {
   const data = await qbGet('/query?query=' + encodeURIComponent('SELECT * FROM Purchase MAXRESULTS 200'));
-  let exp = data.QueryResponse?.Purchase || [];
+  const exp = data.QueryResponse?.Purchase || [];
   const row = e => ({ vendor: e.EntityRef?.name||'Unknown', amount: e.TotalAmt||0, date: e.TxnDate, type: e.PaymentType });
+
   switch (query_type) {
-    case 'by_vendor':
-      if (vendor) exp = exp.filter(e => e.EntityRef?.name?.toLowerCase().includes(vendor.toLowerCase()));
-      return { count: exp.length, total: exp.reduce((s,e)=>s+(e.TotalAmt||0),0), expenses: exp.slice(0,10).map(row) };
-    case 'recent':
-      exp = exp.sort((a,b)=>new Date(b.TxnDate)-new Date(a.TxnDate)).slice(0,10);
-      return { expenses: exp.map(row) };
-    case 'by_category':
+    case 'by_vendor': {
+      const filtered = vendor
+        ? exp.filter(e => (e.EntityRef?.name || '').toLowerCase().includes(vendor.toLowerCase()))
+        : exp;
+      return { count: filtered.length, total: filtered.reduce((s,e)=>s+(e.TotalAmt||0),0), expenses: filtered.slice(0,10).map(row) };
+    }
+    case 'recent': {
+      const sorted = [...exp].sort((a,b)=>new Date(b.TxnDate)-new Date(a.TxnDate)).slice(0,10);
+      return { expenses: sorted.map(row) };
+    }
+    case 'by_category': {
       const cats = {};
-      exp.forEach(e => { const k = e.Line?.[0]?.AccountBasedExpenseLineDetail?.AccountRef?.name||'Other'; cats[k]=(cats[k]||0)+(e.TotalAmt||0); });
+      exp.forEach(e => { const k = e.Line?.[0]?.AccountBasedExpenseLineDetail?.AccountRef?.name || 'Other'; cats[k] = (cats[k]||0) + (e.TotalAmt||0); });
       return { categories: Object.entries(cats).map(([name,total])=>({name,total})).sort((a,b)=>b.total-a.total) };
+    }
+    case 'flag_unusual': {
+      if (exp.length === 0) return { message: 'No expenses on record to analyze' };
+      const amounts = exp.map(e => e.TotalAmt || 0);
+      const avg = amounts.reduce((s,a)=>s+a,0) / amounts.length;
+      const stdDev = Math.sqrt(amounts.map(a=>Math.pow(a-avg,2)).reduce((s,v)=>s+v,0) / amounts.length);
+      const threshold = avg + (2 * stdDev);
+      const unusual = exp.filter(e => (e.TotalAmt||0) > threshold).map(row);
+      // Check for potential duplicates: same vendor + same amount within 7 days
+      const duplicates = [];
+      const seen = new Set();
+      for (let i = 0; i < exp.length; i++) {
+        for (let j = i+1; j < exp.length; j++) {
+          const e1 = exp[i], e2 = exp[j];
+          const key = `${e1.EntityRef?.name}|${e1.TotalAmt}`;
+          if (seen.has(key)) continue;
+          const daysDiff = Math.abs(new Date(e1.TxnDate) - new Date(e2.TxnDate)) / (1000*60*60*24);
+          if (e1.EntityRef?.name === e2.EntityRef?.name && e1.TotalAmt === e2.TotalAmt && daysDiff <= 7) {
+            seen.add(key);
+            duplicates.push({ vendor: e1.EntityRef?.name, amount: e1.TotalAmt, dates: [e1.TxnDate, e2.TxnDate] });
+          }
+        }
+      }
+      return {
+        avg_expense: avg.toFixed(2),
+        high_threshold: threshold.toFixed(2),
+        unusual_expenses: unusual,
+        potential_duplicates: duplicates,
+        summary: `Found ${unusual.length} unusually large expense(s) and ${duplicates.length} potential duplicate(s)`
+      };
+    }
+    case 'create_expense': {
+      if (!vendor) return { error: 'vendor name is required to create an expense' };
+      if (!amount || isNaN(parseFloat(amount))) return { error: 'A valid amount is required to create an expense' };
+      const accountName = CATEGORY_ACCOUNTS[category] || 'Other Business Expenses';
+      const body = {
+        PaymentType: 'Cash',
+        AccountRef: { name: 'Checking' },
+        TxnDate: date || new Date().toISOString().split('T')[0],
+        EntityRef: { name: vendor, type: 'Vendor' },
+        Line: [{
+          Amount: parseFloat(amount),
+          DetailType: 'AccountBasedExpenseLineDetail',
+          Description: memo || `${category || 'Expense'}: ${vendor}`,
+          AccountBasedExpenseLineDetail: { AccountRef: { name: accountName }, BillableStatus: 'NotBillable' }
+        }]
+      };
+      const result = await qbPost('/purchase', body);
+      return { success: true, purchase_id: result.Purchase?.Id, vendor, amount: parseFloat(amount), category: category || 'Other', account: accountName, status: 'Expense created in QuickBooks' };
+    }
     default:
       return { count: exp.length, total: exp.reduce((s,e)=>s+(e.TotalAmt||0),0) };
   }
@@ -260,21 +469,80 @@ app.post('/api/chat', async (req, res) => {
   const { message, history = [] } = req.body;
 
   const tools = [
-    { name: 'invoice_agent',   description: 'Get invoice data — overdue, paid, unpaid, by customer, totals. Use for any invoice or billing question.',           input_schema: { type:'object', properties: { query_type:{type:'string',enum:['overdue','paid','unpaid','by_customer','all']}, customer_name:{type:'string'} }, required:['query_type'] } },
-    { name: 'cash_flow_agent', description: 'Get profit & loss, revenue, expenses, net income. Use for any cash flow or financial health question.',              input_schema: { type:'object', properties: { period:{type:'string',enum:['this_month','this_year']} }, required:['period'] } },
-    { name: 'customer_agent',  description: 'Get customer data — who owes money, balances, contact info. Use for any customer question.',                         input_schema: { type:'object', properties: { query_type:{type:'string',enum:['all','by_name','highest_balance','overdue']}, customer_name:{type:'string'} }, required:['query_type'] } },
-    { name: 'expense_agent',   description: 'Get expense and purchase data — total spending, by vendor, by category, recent purchases. Use for expense questions.', input_schema: { type:'object', properties: { query_type:{type:'string',enum:['total','by_category','by_vendor','recent']}, vendor:{type:'string'} }, required:['query_type'] } },
+    {
+      name: 'invoice_agent',
+      description: 'Manages invoices — reads data AND takes actions. Use for invoice questions (overdue, paid, unpaid, by customer) AND for drafting payment reminder emails (draft_reminder) or creating new invoices in QuickBooks (create_invoice).',
+      input_schema: {
+        type: 'object',
+        properties: {
+          query_type: { type:'string', enum:['overdue','paid','unpaid','by_customer','all','draft_reminder','create_invoice'], description:'What to do: read data or take action' },
+          customer_name: { type:'string', description:'Customer name — required for by_customer, draft_reminder, create_invoice' },
+          amount: { type:'number', description:'Invoice amount — required for create_invoice' },
+          due_date: { type:'string', description:'Due date YYYY-MM-DD — for create_invoice (defaults to 30 days)' },
+          description: { type:'string', description:'Line item description — for create_invoice' }
+        },
+        required: ['query_type']
+      }
+    },
+    {
+      name: 'cash_flow_agent',
+      description: 'Gets financial data — P&L, revenue, expenses, net income, and AI-powered financial insights. Use for cash flow, profit, income, financial health, or analysis questions.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          period: { type:'string', enum:['this_month','this_year'], description:'Time period for the report' },
+          query_type: { type:'string', enum:['summary','generate_insights'], description:'summary for raw numbers, generate_insights for AI analysis and recommendations' }
+        },
+        required: ['period']
+      }
+    },
+    {
+      name: 'customer_agent',
+      description: 'Manages customers — reads data AND creates content. Get customer lists, balances, full 360 customer profile with payment history and risk level, or draft thank-you notes.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          query_type: { type:'string', enum:['all','by_name','highest_balance','overdue','get_customer_360','draft_thank_you'], description:'What to do' },
+          customer_name: { type:'string', description:'Customer name — required for by_name, get_customer_360, draft_thank_you' }
+        },
+        required: ['query_type']
+      }
+    },
+    {
+      name: 'expense_agent',
+      description: 'Manages expenses — reads data AND takes actions. Get spending totals, expenses by category/vendor, recent purchases, flag unusual or duplicate expenses, or create new expense entries in QuickBooks.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          query_type: { type:'string', enum:['total','by_category','by_vendor','recent','flag_unusual','create_expense'], description:'What to do' },
+          vendor: { type:'string', description:'Vendor name — for by_vendor filter or create_expense' },
+          amount: { type:'number', description:'Amount — required for create_expense' },
+          date: { type:'string', description:'Date YYYY-MM-DD — for create_expense (defaults to today)' },
+          category: { type:'string', description:'Category for create_expense: Materials, Supplies, Food, Travel, Utilities, Office, Equipment, Software, Other' },
+          memo: { type:'string', description:'Description/memo — for create_expense' }
+        },
+        required: ['query_type']
+      }
+    },
   ];
 
-  const SYSTEM = `You are Jennifer, a warm and professional AI Office Manager. You route questions to specialized sub-agents (Invoice Agent, Cash Flow Agent, Customer Agent, Expense Agent) and deliver clear, helpful answers.
+  const SYSTEM = `You are Jennifer, a warm and professional AI Office Manager with both knowledge and action skills. You coordinate specialized sub-agents and can take real business actions on behalf of the owner.
+
+Your capabilities:
+- INVOICE AGENT: Check overdue/paid/unpaid invoices, draft payment reminder emails, create new invoices
+- CASH FLOW AGENT: Revenue, expenses, net income, and AI financial health insights
+- CUSTOMER AGENT: Customer balances, full customer profile (360 view), draft thank-you notes
+- EXPENSE AGENT: Spending analysis, flag unusual/duplicate expenses, create expense entries in QuickBooks
+
 Rules:
-- Be concise — answers may be read aloud or sent via Telegram
+- Be concise — answers may be read aloud
 - Use exact numbers from the data
-- Use natural conversational sentences, not bullet points
-- Sound like a trusted assistant, not a robot
-- If asked about multiple things, answer each briefly
+- Speak naturally, like a trusted assistant, not a robot
 - Format dollars as $X,XXX
-- If someone greets you, greet back warmly before answering`;
+- When you draft emails or notes, present them clearly labeled so the owner can review before sending
+- For action results (draft created, invoice created, expense posted), confirm what was done with a brief summary
+- If a skill returns an error, explain it clearly and suggest what the owner should check
+- Greet back warmly if greeted`;
 
   const messages = [
     ...history.slice(-6).map(h => ({ role: h.role, content: h.content })),
@@ -298,7 +566,7 @@ Rules:
           else if (tu.name === 'cash_flow_agent') result = await cashFlowAgent(tu.input);
           else if (tu.name === 'customer_agent')  result = await customerAgent(tu.input);
           else if (tu.name === 'expense_agent')   result = await expenseAgent(tu.input);
-          else result = { error: 'Unknown agent' };
+          else result = { error: `Unknown agent: ${tu.name}` };
         } catch(e) { result = { error: e.message }; }
         toolResults.push({ type:'tool_result', tool_use_id:tu.id, content:JSON.stringify(result) });
       }
