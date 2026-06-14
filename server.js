@@ -42,7 +42,8 @@ app.get('/callback', async (req, res) => {
 
 // ── Helper: authenticated QB request
 async function qbGet(path) {
-  const { data } = await axios.get(`${SANDBOX_BASE}/${companyId}${path}?minorversion=65`, {
+  const sep = path.includes('?') ? '&' : '?';
+  const { data } = await axios.get(`${SANDBOX_BASE}/${companyId}${path}${sep}minorversion=65`, {
     headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: 'application/json' }
   });
   return data;
