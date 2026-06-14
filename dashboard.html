@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>QuickBooks Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f4ff; }
+
+    .header {
+      background: #1e2a6e; color: white;
+      padding: 24px 32px; display: flex; align-items: center; justify-content: space-between;
+    }
+    .header h1 { font-size: 28px; font-weight: 800; }
+    .header p  { font-size: 14px; opacity: 0.6; margin-top: 4px; }
+    .login-btn {
+      background: #2ca01c; color: white; border: none;
+      padding: 12px 28px; border-radius: 10px; font-size: 16px;
+      font-weight: 700; cursor: pointer;
+    }
+    .login-btn:hover { background: #1e7a14; }
+
+    .main { padding: 28px 32px; }
+
+    /* Summary Cards */
+    .cards { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 28px; }
+    .card {
+      background: white; border-radius: 16px;
+      padding: 20px; box-shadow: 0 2px 12px rgba(45,58,140,0.08);
+      border-top: 4px solid var(--c);
+    }
+    .card .label { font-size: 14px; color: #6b7280; margin-bottom: 8px; }
+    .card .value { font-size: 32px; font-weight: 800; color: var(--c); }
+
+    /* Sections */
+    .section {
+      background: white; border-radius: 16px;
+      padding: 22px; box-shadow: 0 2px 12px rgba(45,58,140,0.08);
+      margin-bottom: 24px;
+    }
+    .section h2 { font-size: 18px; font-weight: 700; color: #1e2a6e; margin-bottom: 16px; border-bottom: 2px solid #f0f4ff; padding-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; padding: 10px 12px; background: #1e2a6e; color: white; font-size: 13px; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; color: #374151; }
+    tr:hover td { background: #f9fafb; }
+    .badge-paid    { background: #dcfce7; color: #16a34a; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .badge-unpaid  { background: #fee2e2; color: #dc2626; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .badge-partial { background: #fef9c3; color: #ca8a04; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .not-connected { text-align: center; padding: 60px; }
+    .not-connected h2 { font-size: 24px; color: #1e2a6e; margin-bottom: 12px; }
+    .not-connected p  { color: #6b7280; margin-bottom: 24px; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>QuickBooks Dashboard</h1>
+    <p>Invoices · Customers · Expenses · Profit & Loss</p>
+  </div>
+  <button class="login-btn" onclick="location.href='/login'">Connect QuickBooks</button>
+</div>
+
+<div class="main" id="main">
+  <div class="not-connected">
+    <h2>Not connected yet</h2>
+    <p>Click "Connect QuickBooks" to log in and load your data.</p>
+    <button class="login-btn" onclick="location.href='/login'">Connect QuickBooks</button>
+  </div>
+</div>
+
+<script>
+  async function load() {
+    const status = await fetch('/api/status').then(r => r.json());
+    if (!status.loggedIn) return;
+
+    const [invoices, customers, expenses, pl] = await Promise.all([
+      fetch('/api/invoices').then(r => r.json()),
+      fetch('/api/customers').then(r => r.json()),
+      fetch('/api/expenses').then(r => r.json()),
+      fetch('/api/profitloss').then(r => r.json()),
+    ]);
+
+    // Summary numbers
+    const totalInvoiced = invoices.reduce((s, i) => s + (i.TotalAmt || 0), 0);
+    const totalUnpaid   = invoices.filter(i => i.Balance > 0).reduce((s, i) => s + (i.Balance || 0), 0);
+    const totalExpenses = expenses.reduce((s, e) => s + (e.TotalAmt || 0), 0);
+    const income  = pl?.Rows?.Row?.find(r => r.group === 'Income');
+    const netIncome = income ? parseFloat(income.Summary?.ColData?.[1]?.value || 0) : 0;
+
+    const fmt = n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2 });
+
+    document.getElementById('main').innerHTML = `
+      <div class="cards">
+        <div class="card" style="--c:#1e40af">
+          <div class="label">Total Invoiced</div>
+          <div class="value">${fmt(totalInvoiced)}</div>
+        </div>
+        <div class="card" style="--c:#dc2626">
+          <div class="label">Unpaid Invoices</div>
+          <div class="value">${fmt(totalUnpaid)}</div>
+        </div>
+        <div class="card" style="--c:#d97706">
+          <div class="label">Total Expenses</div>
+          <div class="value">${fmt(totalExpenses)}</div>
+        </div>
+        <div class="card" style="--c:#16a34a">
+          <div class="label">Net Income</div>
+          <div class="value">${fmt(netIncome)}</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Invoices (${invoices.length})</h2>
+        <table>
+          <thead><tr><th>#</th><th>Customer</th><th>Date</th><th>Amount</th><th>Balance</th><th>Status</th></tr></thead>
+          <tbody>${invoices.map(i => `<tr>
+            <td>${i.DocNumber || '—'}</td>
+            <td>${i.CustomerRef?.name || '—'}</td>
+            <td>${i.TxnDate || '—'}</td>
+            <td>${fmt(i.TotalAmt || 0)}</td>
+            <td>${fmt(i.Balance || 0)}</td>
+            <td>${i.Balance <= 0 ? '<span class="badge-paid">Paid</span>' : i.Balance < i.TotalAmt ? '<span class="badge-partial">Partial</span>' : '<span class="badge-unpaid">Unpaid</span>'}</td>
+          </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:20px">No invoices found</td></tr>'}</tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h2>Customers (${customers.length})</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Balance</th><th>Status</th></tr></thead>
+          <tbody>${customers.map(c => `<tr>
+            <td><strong>${c.DisplayName || '—'}</strong></td>
+            <td>${c.PrimaryEmailAddr?.Address || '—'}</td>
+            <td>${c.PrimaryPhone?.FreeFormNumber || '—'}</td>
+            <td>${fmt(c.Balance || 0)}</td>
+            <td>${c.Active ? '<span class="badge-paid">Active</span>' : '<span class="badge-unpaid">Inactive</span>'}</td>
+          </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:20px">No customers found</td></tr>'}</tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h2>Expenses (${expenses.length})</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Vendor</th><th>Payment Method</th><th>Amount</th></tr></thead>
+          <tbody>${expenses.map(e => `<tr>
+            <td>${e.TxnDate || '—'}</td>
+            <td>${e.EntityRef?.name || '—'}</td>
+            <td>${e.PaymentType || '—'}</td>
+            <td>${fmt(e.TotalAmt || 0)}</td>
+          </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:20px">No expenses found</td></tr>'}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  load();
+</script>
+</body>
+</html>
